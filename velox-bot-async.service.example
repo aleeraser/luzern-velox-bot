@@ -1,0 +1,14 @@
+[Unit]
+Description=Luzern velox Telegram bot
+After=network-online.target
+
+[Service]
+Type=simple
+User=[REPLACE_WITH_USER]
+Group=[REPLACE_WITH_USER]
+RestartSec=60
+Restart=on-failure
+ExecStart=[PATH_TO_BOT]/velox-bot-async.py
+
+[Install]
+WantedBy=multi-user.target
