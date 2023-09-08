@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-BASE_DIR = f"{os.path.expanduser('~')}/luzern-velox-bot"
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
 # Function to fetch the current list from the website
@@ -57,7 +57,7 @@ def fetch_current_list():
 
 
 def save_chats(chat_ids):
-    with open('chat_ids.json', 'w', encoding='utf-8') as f:
+    with open(f'{BASE_DIR}/chat_ids.json', 'w', encoding='utf-8') as f:
         json.dump(chat_ids, f, indent=2)
 
 
@@ -66,7 +66,7 @@ def save_chat_id(chat_id):
     chat_id = str(chat_id)
 
     try:
-        with open('chat_ids.json', 'r', encoding='utf-8') as f:
+        with open(f'{BASE_DIR}/chat_ids.json', 'r', encoding='utf-8') as f:
             chat_ids = json.load(f)
     except FileNotFoundError:
         chat_ids = {}
@@ -83,7 +83,7 @@ def save_chat_id(chat_id):
 
 def get_chats():
     try:
-        with open('chat_ids.json', 'r', encoding='utf-8') as f:
+        with open(f'{BASE_DIR}/chat_ids.json', 'r', encoding='utf-8') as f:
             chats = json.load(f)
     except FileNotFoundError:
         return None  # No chats saved
@@ -170,7 +170,7 @@ async def check_for_updates(app):
 
     # Load previous list
     try:
-        with open('previous_list.txt', 'r', encoding='utf-8') as f:
+        with open(f'{BASE_DIR}/previous_list.txt', 'r', encoding='utf-8') as f:
             previous_list = json.load(f)
     except FileNotFoundError:
         previous_list = []
@@ -194,7 +194,7 @@ async def check_for_updates(app):
     await broadcast(app, msg, no_updates=no_updates)
 
     # Save the current list for future comparison
-    with open('previous_list.txt', 'w', encoding='utf-8') as f:
+    with open(f'{BASE_DIR}/previous_list.txt', 'w', encoding='utf-8') as f:
         json.dump(current_list, f)
 
 # get the token from config.json
