@@ -137,6 +137,12 @@ async def cmd_current_list(update: Update,
                                    text=f"Current List:\n{formatted_list}")
 
 
+# Command to handle /manual_update
+async def cmd_manual_update(_update: Update,
+                            context: ContextTypes.DEFAULT_TYPE):
+    return await check_for_updates(context.application)
+
+
 # Command to handle /notify_no_updates
 async def cmd_set_notify_no_updates(update: Update,
                                     context: ContextTypes.DEFAULT_TYPE):
@@ -220,6 +226,7 @@ app = ApplicationBuilder().token(configs["BOT_TOKEN"]).build()
 
 app.add_handler(CommandHandler("start", cmd_start))
 app.add_handler(CommandHandler("current_list", cmd_current_list))
+app.add_handler(CommandHandler("manual_update", cmd_manual_update))
 app.add_handler(CommandHandler("notify_no_updates", cmd_set_notify_no_updates))
 
 trigger = CronTrigger(
