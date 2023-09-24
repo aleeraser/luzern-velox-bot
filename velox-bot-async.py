@@ -192,9 +192,9 @@ async def check_for_updates(app):
     # Generate the message to send
     msg = "Checking for updates:\n"
     if added:
-        msg += f"Added: {', '.join(added)}\n"
+        msg += "Added:\n- " + "\n- ".join(added) + "\n"
     if removed:
-        msg += f"Removed: {', '.join(removed)}\n"
+        msg += "Removed:\n- " + "\n- ".join(removed) + "\n"
     if not added and not removed:
         msg += "No changes detected."
         no_updates = True
