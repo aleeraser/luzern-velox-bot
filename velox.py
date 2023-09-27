@@ -231,7 +231,7 @@ async def check_for_updates(app=None, save_list=True, forced_update=False):
     if app:
         await broadcast(app, msg, no_updates=no_updates)
 
-    if save_list:
+    if not no_updates and save_list:
         # Save the current list for future comparison
         with open(f'{BASE_DIR}/previous_list.txt', 'w', encoding='utf-8') as f:
             json.dump(list(current_dict.keys()), f)
