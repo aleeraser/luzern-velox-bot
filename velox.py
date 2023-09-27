@@ -125,7 +125,7 @@ async def broadcast(app, msg, no_updates):
     for chat_id in chat_ids.keys():
         chat_id = str(chat_id)
         if no_updates and not should_notify_no_updates(chat_id):
-            pass
+            continue
         await app.bot.send_message(chat_id=chat_id, text=msg,
                                    parse_mode=ParseMode.HTML,
                                    disable_web_page_preview=True)
