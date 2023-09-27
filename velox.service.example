@@ -8,7 +8,7 @@ User=[REPLACE_WITH_USER]
 Group=[REPLACE_WITH_USER]
 RestartSec=60
 Restart=on-failure
-ExecStart=[PATH_TO_BOT]/velox-bot-async.py
+ExecStart=[PATH_TO_BOT]/velox.py --telegram-bot
 
 [Install]
 WantedBy=multi-user.target
