@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 
 import requests
@@ -11,13 +12,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
 # Function to fetch the current list from the website
-def fetch_current_list():
+def fetch_current_dict():
     # Define the URL
     url = 'https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen'  # noqa: E501
 
@@ -25,7 +27,7 @@ def fetch_current_list():
     response = requests.get(url, timeout=30)
 
     # To store the current list
-    current_list = []
+    current_dict = {}
 
     # Check if the request was successful
     if response.status_code != 200:
@@ -53,11 +55,20 @@ def fetch_current_list():
         # Find the inner <a> tag
         a_tag = li.find('a')
 
-        # Extract and store the text content
+        # Extract and store the text content and coordinates
         if a_tag:
-            current_list.append(a_tag.text)
+            match = re.search(r"map\.flyTo\(\[(.*?),(.*?)\]", a_tag.get('onclick', ''))
+            if match:
+                lat = match.group(1).strip()
+                long = match.group(2).strip()
+                velox_url = f"https://www.google.com/maps/search/?api=1&query={lat}%2C{long}"
+            else:
+                print(f"Error: couldn't retrieve coordinates for {a_tag.text}")
+                velox_url = url
 
-    return current_list
+            current_dict[a_tag.text] = velox_url
+
+    return current_dict
 
 
 def save_chats(chat_ids):
@@ -105,11 +116,6 @@ def should_notify_no_updates(chat_id):
     return chat_ids[chat_id].get("notify_for_no_updates", False)
 
 
-def get_current_list():
-    current_list = fetch_current_list()
-    return "\n".join(current_list)
-
-
 async def broadcast(app, msg, no_updates):
     chat_ids = get_chats()
 
@@ -120,7 +126,9 @@ async def broadcast(app, msg, no_updates):
         chat_id = str(chat_id)
         if no_updates and not should_notify_no_updates(chat_id):
             pass
-        await app.bot.send_message(chat_id=chat_id, text=msg)
+        await app.bot.send_message(chat_id=chat_id, text=msg,
+                                   parse_mode=ParseMode.HTML,
+                                   disable_web_page_preview=True)
 
 
 # Command to handle /start
@@ -138,15 +146,20 @@ async def cmd_start(update: Update,
 # Command to handle /current_list
 async def cmd_current_list(update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
-    formatted_list = get_current_list()
+
+    msg = "Current List\n\n"
+    for velox, url in fetch_current_dict().items():
+        msg += f"- <a href='{url}'>{velox}</a>\n"
+
     await context.bot.send_message(chat_id=update.message.chat_id,
-                                   text=f"Current List:\n{formatted_list}")
+                                   text=msg, parse_mode=ParseMode.HTML,
+                                   disable_web_page_preview=True)
 
 
 # Command to handle /manual_update
 async def cmd_manual_update(_update: Update,
                             context: ContextTypes.DEFAULT_TYPE):
-    return await check_for_updates(context.application)
+    return await check_for_updates(context.application, forced_update=True)
 
 
 # Command to handle /notify_no_updates
@@ -172,12 +185,12 @@ async def cmd_set_notify_no_updates(update: Update,
 
 
 # Check for changes and send updates to Telegram
-async def check_for_updates(app=None, save_list=True, print_list=False):
+async def check_for_updates(app=None, save_list=True, forced_update=False):
     # Fetch the current list
-    current_list = fetch_current_list()
+    current_dict = fetch_current_dict()
     no_updates = False
 
-    if current_list is None:
+    if current_dict is None:
         msg = "Failed to fetch updates."
 
         print(msg)
@@ -194,20 +207,25 @@ async def check_for_updates(app=None, save_list=True, print_list=False):
         previous_list = []
 
     # Compare and find changes
-    set_current = set(current_list)
+    set_current = set(current_dict.keys())
     set_previous = set(previous_list)
     added = set_current - set_previous
     removed = set_previous - set_current
 
     # Generate the message to send
-    msg = "Checking for updates:\n"
+    msg = "Checking for updates\n\n"
     if added:
-        msg += "Added:\n- " + "\n- ".join(added) + "\n"
+        msg += "Added:\n"
+        for el in added:
+            msg += f"- <a href='{current_dict[el]}'>{el}</a>\n"
     if removed:
-        msg += "Removed:\n- " + "\n- ".join(removed) + "\n"
+        msg += "Removed:\n"
+        for el in removed:
+            msg += f"- <a href='{current_dict[el]}'>{el}</a>\n"
     if not added and not removed:
         msg += "No changes detected."
-        no_updates = True
+        # mask no_updates flag if forced_update
+        no_updates = not forced_update
 
     print(msg)
     if app:
@@ -216,10 +234,7 @@ async def check_for_updates(app=None, save_list=True, print_list=False):
     if save_list:
         # Save the current list for future comparison
         with open(f'{BASE_DIR}/previous_list.txt', 'w', encoding='utf-8') as f:
-            json.dump(current_list, f)
-
-    if print_list:
-        json.dumps(current_list)
+            json.dump(list(current_dict.keys()), f)
 
 
 def bot_start():
@@ -287,5 +302,6 @@ if args.telegram_bot:
 # cli section
 asyncio.run(check_for_updates(save_list=args.save_list))
 if args.print_list:
-    print()
-    print(get_current_list())
+    print("\nCurrent list:")
+    for velox, url in fetch_current_dict().items():
+        print(f"{velox}: {url}")
