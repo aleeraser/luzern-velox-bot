@@ -203,7 +203,7 @@ async def check_for_updates(app=None, save_list=True, forced_update=False):
     try:
         with open(f'{BASE_DIR}/previous_list.txt', 'r', encoding='utf-8') as f:
             previous_list = json.load(f)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
         previous_list = []
 
     # Compare and find changes
