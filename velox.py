@@ -221,7 +221,8 @@ async def check_for_updates(app=None, save_list=True, forced_update=False):
     if removed:
         msg += "Removed:\n"
         for el in removed:
-            msg += f"- <a href='{current_dict[el]}'>{el}</a>\n"
+            # TODO: save url in dict and use it also for removed items
+            msg += f"- {el}\n"
     if not added and not removed:
         msg += "No changes detected."
         # mask no_updates flag if forced_update
