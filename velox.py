@@ -268,7 +268,7 @@ def bot_start():
                                    cmd_set_notify_no_updates))
 
     trigger = CronTrigger(
-        year="*", month="*", day="*", hour="8,16", minute="0", second="0"
+        year="*", month="*", day="*", hour="*", minute="0", second="0"
     )
 
     scheduler = AsyncIOScheduler()
