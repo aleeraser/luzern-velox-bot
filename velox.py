@@ -186,16 +186,17 @@ async def check_for_updates(app=None, save_list=True, forced_update=False):
 
         return
 
-    # load previous list
+    set_current = set(current_dict.keys())
+
+    # load previous dict
     try:
-        with open(f'{BASE_DIR}/previous_list.txt', 'r', encoding='utf-8') as f:
-            previous_list = json.load(f)
+        with open(f'{BASE_DIR}/previous_dict.json', 'r', encoding='utf-8') as f:
+            previous_dict = json.load(f)
+            set_previous = set(previous_dict.keys())
     except (FileNotFoundError, ValueError):
-        previous_list = []
+        set_previous = set()
 
     # compare and find changes
-    set_current = set(current_dict.keys())
-    set_previous = set(previous_list)
     added = set_current - set_previous
     removed = set_previous - set_current
 
@@ -208,8 +209,7 @@ async def check_for_updates(app=None, save_list=True, forced_update=False):
     if removed:
         msg += "Removed:\n"
         for el in removed:
-            # TODO: save url in dict and use it also for removed items
-            msg += f"- {el}\n"
+            msg += f"- <a href='{previous_dict[el]}'>{el}</a>\n"
     if not added and not removed:
         msg += "No changes detected."
         # mask no_updates flag if forced_update
@@ -221,8 +221,8 @@ async def check_for_updates(app=None, save_list=True, forced_update=False):
 
     if not no_updates and save_list:
         # save the current list
-        with open(f'{BASE_DIR}/previous_list.txt', 'w', encoding='utf-8') as f:
-            json.dump(list(current_dict.keys()), f)
+        with open(f'{BASE_DIR}/previous_dict.json', 'w', encoding='utf-8') as f:
+            json.dump(current_dict, f)
 
 
 def bot_start():
