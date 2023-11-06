@@ -18,6 +18,10 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
+def generate_maps_base_url(lat_long_t):
+    return f"https://www.google.com/maps/search/?api=1&query={lat_long_t[0]}%2C{lat_long_t[1]}"
+
+
 def fetch_current_dict():
     """Fetch the current velox list and returns it as a {location_name:maps_url} dict"""
     url = 'https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen'
@@ -48,12 +52,12 @@ def fetch_current_dict():
             if match:
                 lat = match.group(1).strip()
                 long = match.group(2).strip()
-                velox_url = f"https://www.google.com/maps/search/?api=1&query={lat}%2C{long}"
+                # velox_url = f"https://www.google.com/maps/search/?api=1&query={lat}%2C{long}"
             else:
                 print(f"Error: couldn't retrieve coordinates for {a_tag.text}")
-                velox_url = url
+                lat = long = None
 
-            current_dict[a_tag.text] = velox_url
+            current_dict[a_tag.text] = (lat, long)
 
     return current_dict
 
@@ -134,8 +138,27 @@ async def cmd_current_list(update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
 
     msg = "Current List\n\n"
-    for velox, url in fetch_current_dict().items():
-        msg += f"- <a href='{url}'>{velox}</a>\n"
+    for velox, lat_long_t in fetch_current_dict().items():
+        msg += f"- <a href='{generate_maps_base_url(lat_long_t)}'>{velox}</a>\n"
+
+    await context.bot.send_message(chat_id=update.message.chat_id,
+                                   text=msg, parse_mode=ParseMode.HTML,
+                                   disable_web_page_preview=True)
+
+
+# command to handle /show_map
+async def cmd_show_map(update: Update,
+                       context: ContextTypes.DEFAULT_TYPE):
+
+    url = "https://www.google.com/maps/dir/"
+    # hardcoded coords of Luzern for map centering
+    url_suffix = "//@47.0473835,8.2532969,12.25z"
+
+    for _, lat_long_t in fetch_current_dict().items():
+        url += f"{lat_long_t[0]},{lat_long_t[1]}/"
+    url += url_suffix
+
+    msg = f"Velox map\n{url}"
 
     await context.bot.send_message(chat_id=update.message.chat_id,
                                    text=msg, parse_mode=ParseMode.HTML,
@@ -253,6 +276,8 @@ def bot_start():
                                    cmd_manual_update))
     app.add_handler(CommandHandler("notify_no_updates",
                                    cmd_set_notify_no_updates))
+    app.add_handler(CommandHandler("show_map",
+                                   cmd_show_map))
 
     trigger = CronTrigger(
         year="*", month="*", day="*", hour="*", minute="0", second="0"
@@ -290,5 +315,5 @@ if args.telegram_bot:
 asyncio.run(check_for_updates(save_list=args.save_list))
 if args.print_list:
     print("\nCurrent list:")
-    for velox, url in fetch_current_dict().items():
-        print(f"{velox}: {url}")
+    for velox, lat_long_t in fetch_current_dict().items():
+        print(f"{velox}: {generate_maps_base_url(lat_long_t)}")
