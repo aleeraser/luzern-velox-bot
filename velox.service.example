@@ -4,11 +4,15 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=[REPLACE_WITH_USER]
-Group=[REPLACE_WITH_USER]
+User=[REPLACE_WITH_USER or run with --user]
+Group=[REPLACE_WITH_USER or run with --user]
 RestartSec=60
 Restart=on-failure
 ExecStart=[PATH_TO_BOT]/velox.py --telegram-bot
 
+# If using SELinux
+#ExecStart=/usr/bin/python3 [PATH_TO_BOT]/velox.py --telegram-bot
+
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
+
