@@ -26,7 +26,7 @@ def fetch_current_dict():
     """Fetch the current velox list and returns it as a {location_name:maps_url} dict"""
     url = 'https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen'
 
-    response = requests.get(url, timeout=30)
+    response = requests.get(url, timeout=30, headers={'User-Agent': 'Mozilla/5.0'})
     if response.status_code != 200:
         print(f"Failed to make request. Status code: {response.status_code}")
         return None
