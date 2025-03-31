@@ -1,0 +1,35 @@
+[Unit]
+Description=Luzern Velox Vibebot Telegram Bot
+# Start after the network is available
+After=network.target
+
+[Service]
+# User and Group that the service will run as
+# Ensure this user has read/write permissions for WorkingDirectory and the executable
+User=your_user
+Group=your_group
+
+# Set the working directory to the project root
+WorkingDirectory=/home/alessandro/git/luzern-velox-vibebot # <-- ADJUST THIS PATH
+
+# Set required environment variables
+# It's often better to use EnvironmentFile= for secrets
+Environment="RUST_LOG=info" # Example: Set log level
+Environment="TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN" # <-- SET YOUR TOKEN HERE
+# EnvironmentFile=/path/to/your/.env
+
+# Command to execute
+# Ensure the binary is built and located here
+ExecStart=/home/alessandro/git/luzern-velox-vibebot/target/release/luzern-velox-vibebot # <-- ADJUST THIS PATH if needed
+
+# Restart the service if it fails
+Restart=on-failure
+RestartSec=5s
+
+# Standard output and error logging configuration
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# Enable the service for the default multi-user target
+WantedBy=multi-user.target
