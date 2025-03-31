@@ -6,9 +6,11 @@ use std::collections::{HashMap, HashSet}; // Added HashMap
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path; // Added for path operations
-use std::sync::Arc; // Added for Arc
-use teloxide::{prelude::*, types::ChatId, utils::command::BotCommands}; // Added BotCommands
-use tokio::sync::Mutex; // Added Mutex
+use std::sync::Arc;
+use teloxide::{prelude::*, types::ChatId, utils::command::BotCommands};
+use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration}; // Added for scheduling
+use chrono::{Local, Timelike}; // Added for time checking
 
 const KNOWN_CAMERAS_FILE_PATH: &str = "known_cameras.json";
 const SUBSCRIBED_CHATS_FILE_PATH: &str = "subscribed_chats.json";
@@ -351,6 +353,10 @@ async fn main() -> Result<()> {
     log::info!("Loaded preferences for {} users from {}", initial_prefs.len(), USER_PREFERENCES_FILE_PATH);
     let user_preferences: SharedUserPreferences = Arc::new(Mutex::new(initial_prefs));
 
+    // --- Clone shared state for the background task BEFORE moving originals to dispatcher ---
+    let bot_clone_for_scheduler = bot.clone();
+    let chats_clone_for_scheduler = subscribed_chats.clone();
+    let prefs_clone_for_scheduler = user_preferences.clone();
 
     // --- Set up command handler ---
     // The handler now needs both shared states
@@ -363,12 +369,49 @@ async fn main() -> Result<()> {
         .enable_ctrlc_handler()
         .build();
 
-    log::info!("Starting dispatcher...");
+    // --- Spawn background task for periodic checks ---
+    // Use the clones created *before* the dispatcher builder
+    tokio::spawn(async move {
+        log::info!("Background update checker task started.");
+        loop {
+            let now = Local::now();
+            let hour = now.hour();
+
+            // Downtime between 2:00 AM and 6:59 AM
+            if hour >= 2 && hour < 7 {
+                log::info!("Bot is in scheduled downtime (2 AM - 7 AM). Checking again at 7 AM.");
+                // Calculate duration until 7 AM
+                let next_check_time = now.date_naive().and_hms_opt(7, 0, 0).unwrap(); // Today at 7:00:00
+                let time_until_7am = next_check_time.signed_duration_since(now.naive_local());
+
+                if let Ok(duration_until_7am) = time_until_7am.to_std() {
+                    sleep(duration_until_7am).await;
+                } else {
+                    // Should not happen unless time goes backwards, but handle defensively
+                    log::warn!("Could not calculate sleep duration until 7 AM. Sleeping for 1 hour.");
+                    sleep(Duration::from_secs(60 * 60)).await; // Sleep for an hour as a fallback
+                }
+                continue; // Skip the check and restart the loop
+            }
+
+            // --- Perform the check ---
+            log::info!("Performing scheduled update check...");
+            // Pass the clones into the check function
+            match check_for_updates(bot_clone_for_scheduler.clone(), chats_clone_for_scheduler.clone(), prefs_clone_for_scheduler.clone()).await {
+                Ok(status) => log::info!("Scheduled check completed: {}", status),
+                Err(e) => log::error!("Scheduled check failed: {:?}", e),
+            }
+
+            // --- Wait for the next interval ---
+            log::info!("Sleeping for 30 minutes until the next scheduled check.");
+            sleep(Duration::from_secs(30 * 60)).await; // Sleep for 30 minutes
+        }
+    });
+
+    // --- Start the command dispatcher ---
+    log::info!("Starting command dispatcher...");
     dispatcher.dispatch().await;
 
     log::info!("Bot stopped.");
     Ok(())
-
-    // Note: The periodic checking logic (Milestone 15) is still needed.
-    // It would typically run in a separate task/loop calling `check_for_updates`.
 }
