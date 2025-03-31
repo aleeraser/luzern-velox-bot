@@ -26,7 +26,7 @@ Here's a breakdown of the planned development steps:
 
 1. **Setup Basic Rust Project:** Initialize the Rust project structure (`cargo new`), add dependencies (`reqwest`, `scraper`, `tokio`, `teloxide`).
 2. **Implement Web Scraper:** Fetch and parse HTML from the Luzern Police website to extract speed camera data.
-3. **Implement State Management:** Store previously seen cameras to detect new ones (in-memory or file-based).
+3. **Implement State Management:** Store previously seen cameras to detect new ones in a file.
 4. **Implement Telegram Integration:** Initialize the bot and send notification messages via the Telegram API.
 5. **Implement Scheduling Logic:** Add polling (every 30 mins) and scheduled downtime (2 AM - 7 AM).
 6. **Configuration:** Read settings (API token, chat ID) from environment variables or a config file.
