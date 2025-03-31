@@ -36,15 +36,14 @@ Here's a breakdown of the planned development steps:
 
 ## Setup & Installation
 
-*(Instructions on how to set up the bot, configure the Telegram API token, chat IDs, etc. will go here. This typically involves cloning the repository, setting environment variables, and building/running the Rust application.)*
+*(Instructions on how to set up the bot, configure the Telegram API token, etc. will go here. This typically involves cloning the repository, setting environment variables, and building/running the Rust application.)*
 
 ```bash
 # Example placeholder commands
 git clone https://github.com/your-username/luzern-velox-vibebot.git
 cd luzern-velox-vibebot
-# Set environment variables (e.g., TELEGRAM_BOT_TOKEN, CHAT_ID)
+# Set environment variables (e.g., TELEGRAM_BOT_TOKEN)
 export TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN"
-export CHAT_ID="YOUR_TARGET_CHAT_ID"
 cargo build --release
 ./target/release/luzern-velox-vibebot
 ```
