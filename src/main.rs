@@ -1,12 +1,8 @@
-use anyhow::{anyhow, Context, Result}; // Import anyhow
-use dotenvy; // Added for .env file loading
+use anyhow::{anyhow, Context, Result};
+use dotenvy;
 use log;
 use pretty_env_logger;
-// Removed unused: use reqwest;
-// Removed unused: use scraper::{Html, Selector};
-// Removed unused: use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-// Removed unused: use std::env;
+use std::collections::{HashMap, HashSet}; // Added HashMap
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path; // Added for path operations
@@ -16,6 +12,7 @@ use tokio::sync::Mutex; // Added Mutex
 
 const KNOWN_CAMERAS_FILE_PATH: &str = "known_cameras.json";
 const SUBSCRIBED_CHATS_FILE_PATH: &str = "subscribed_chats.json";
+const USER_PREFERENCES_FILE_PATH: &str = "user_preferences.json"; // Added preferences file path
 
 // --- Camera State Handling ---
 
@@ -78,6 +75,37 @@ fn save_subscribed_chats<P: AsRef<Path>>(path: P, chats: &HashSet<ChatId>) -> Re
         .with_context(|| format!("Failed to write subscribed chats file {}", path.display()))
 }
 
+// --- User Preferences Handling ---
+
+// Type alias for user preferences (ChatId -> Notify on No Updates?)
+type UserPreferences = HashMap<ChatId, bool>;
+
+// Function to load user preferences
+fn load_user_preferences<P: AsRef<Path>>(path: P) -> Result<UserPreferences> {
+    let path = path.as_ref();
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            if content.is_empty() {
+                Ok(HashMap::new())
+            } else {
+                serde_json::from_str(&content)
+                    .with_context(|| format!("Failed to parse JSON from {}", path.display()))
+            }
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(e) => Err(anyhow!(e)).with_context(|| format!("Failed to read user preferences file {}", path.display())),
+    }
+}
+
+// Function to save user preferences
+fn save_user_preferences<P: AsRef<Path>>(path: P, preferences: &UserPreferences) -> Result<()> {
+    let path = path.as_ref();
+    let content = serde_json::to_string_pretty(preferences)
+        .with_context(|| "Failed to serialize user preferences to JSON")?;
+    fs::write(path, content)
+        .with_context(|| format!("Failed to write user preferences file {}", path.display()))
+}
+
 
 // --- Bot Commands ---
 
@@ -88,26 +116,31 @@ enum Command {
     Start,
     #[command(description = "Show the current list of known speed cameras.")]
     CurrentList,
+    #[command(description = "Toggle notifications for checks with no new cameras.")]
+    NotifyNoUpdates,
     // Add other commands here later
     // Help,
-    // NotifyNoUpdates,
     // ManualUpdate,
 }
 
 // --- Command Handler ---
 
-// Type alias for the shared state
+// Type aliases for shared state
 type SharedSubscribedChats = Arc<Mutex<HashSet<ChatId>>>;
+type SharedUserPreferences = Arc<Mutex<UserPreferences>>; // Added shared preferences type
 
 async fn handle_command(
     bot: Bot,
     msg: Message,
     cmd: Command,
     subscribed_chats: SharedSubscribedChats,
+    user_preferences: SharedUserPreferences, // Added preferences to handler args
 ) -> Result<()> {
+    let chat_id = msg.chat.id; // Get chat_id once for all commands
+
     match cmd {
         Command::Start => {
-            let chat_id = msg.chat.id;
+            // let chat_id = msg.chat.id; // Already defined above
             log::info!("Received /start command from chat ID: {}", chat_id);
 
             let mut chats = subscribed_chats.lock().await;
@@ -125,11 +158,11 @@ async fn handle_command(
             } else {
                 // Chat ID was already present
                 log::info!("Chat ID {} is already subscribed.", chat_id);
-                bot.send_message(chat_id, "You are already subscribed.").await?;
+                    bot.send_message(chat_id, "You are already subscribed.").await?;
             }
         }
         Command::CurrentList => {
-            let chat_id = msg.chat.id;
+            // let chat_id = msg.chat.id; // Already defined above
             log::info!("Received /current_list command from chat ID: {}", chat_id);
 
             match load_known_cameras(KNOWN_CAMERAS_FILE_PATH) {
@@ -149,10 +182,35 @@ async fn handle_command(
                     bot.send_message(chat_id, "Sorry, I couldn't retrieve the current camera list due to an error.").await?;
                 }
             }
-        } // Add handlers for other commands here later
-          // Command::Help => { ... }
-          // Command::NotifyNoUpdates => { ... }
-          // Command::ManualUpdate => { ... }
+        }
+        Command::NotifyNoUpdates => {
+            // let chat_id = msg.chat.id; // Already defined above
+            log::info!("Received /notify_no_updates command from chat ID: {}", chat_id);
+
+            let mut prefs = user_preferences.lock().await;
+            // Get current value, default to false if not present
+            let current_pref = prefs.entry(chat_id).or_insert(false);
+            // Toggle the value
+            *current_pref = !*current_pref;
+            let new_pref = *current_pref; // Copy the new value for the message
+
+            // Save the updated preferences
+            if let Err(e) = save_user_preferences(USER_PREFERENCES_FILE_PATH, &prefs) {
+                log::error!("Failed to save user preferences: {:?}", e);
+                bot.send_message(chat_id, "An error occurred while saving your preference. Please try again later.").await?;
+            } else {
+                log::info!("Successfully saved user preferences for chat ID {}.", chat_id);
+                let message = if new_pref {
+                    "You will now be notified even when no new cameras are found."
+                } else {
+                    "You will only be notified when new cameras are found."
+                };
+                bot.send_message(chat_id, message).await?;
+            }
+        }
+        // Add handlers for other commands here later
+        // Command::Help => { ... }
+        // Command::ManualUpdate => { ... }
     }
     Ok(())
 }
@@ -182,13 +240,20 @@ async fn main() -> Result<()> {
     log::info!("Loaded {} subscribed chats from {}", initial_chats.len(), SUBSCRIBED_CHATS_FILE_PATH);
     let subscribed_chats: SharedSubscribedChats = Arc::new(Mutex::new(initial_chats));
 
+    // Load user preferences
+    let initial_prefs = load_user_preferences(USER_PREFERENCES_FILE_PATH)?;
+    log::info!("Loaded preferences for {} users from {}", initial_prefs.len(), USER_PREFERENCES_FILE_PATH);
+    let user_preferences: SharedUserPreferences = Arc::new(Mutex::new(initial_prefs));
+
+
     // --- Set up command handler ---
-    let command_handler = move |bot: Bot, msg: Message, cmd: Command, subscribed_chats: SharedSubscribedChats| async move {
-        handle_command(bot, msg, cmd, subscribed_chats).await
+    // The handler now needs both shared states
+    let command_handler = move |bot: Bot, msg: Message, cmd: Command, subscribed_chats: SharedSubscribedChats, user_preferences: SharedUserPreferences| async move {
+        handle_command(bot, msg, cmd, subscribed_chats, user_preferences).await
     };
 
     let mut dispatcher = Dispatcher::builder(bot, Update::filter_message().branch(dptree::entry().filter_command::<Command>().endpoint(command_handler)))
-        .dependencies(dptree::deps![subscribed_chats])
+        .dependencies(dptree::deps![subscribed_chats, user_preferences]) // Add user_preferences dependency
         .enable_ctrlc_handler()
         .build();
 
