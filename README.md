@@ -28,28 +28,53 @@ Here's a breakdown of the planned development steps:
 2. **Implement Web Scraper:** Fetch and parse HTML from the Luzern Police website to extract speed camera data.
 3. **Implement State Management:** Store previously seen cameras to detect new ones in a file.
 4. **Implement Telegram Integration:** Initialize the bot and send notification messages via the Telegram API.
-5. **Implement Scheduling Logic:** Add polling (every 30 mins) and scheduled downtime (2 AM - 7 AM).
-6. **Configuration:** Read settings (API token, chat ID) from environment variables or a config file.
-7. **Error Handling & Logging:** Implement robust error handling and basic logging.
-8. **Build & Deployment:** Document build steps and basic deployment guidance.
-9. **Refine dependencies:** Remove unnecessary dependencies.
-10. **Implement User Commands:** Add handlers for `/start`, `/current_list`, `/notify_no_updates`, `/manual_update`.
-11. **Persistent User Storage:** Implement saving/loading of chat IDs and notification preferences.
-12. **Systemd Integration:** Check systemd service file and instructions.
+5. **Configuration:** Read settings (API token, chat ID) from environment variables or a config file.
+6. **Error Handling & Logging:** Implement robust error handling and basic logging.
+7. **Build & Deployment:** Document build steps and basic deployment guidance.
+8. **Refine dependencies:** Remove unnecessary dependencies.
+9. **Implement User Commands:** Add handlers for `/start`, `/current_list`, `/notify_no_updates`, `/manual_update`.
+10. **Persistent User Storage:** Implement saving/loading of chat IDs and notification preferences.
+11. **Systemd Integration:** Check systemd service file and instructions.
+12. **Implement Scheduling Logic:** Add polling (every 30 mins) and scheduled downtime (2 AM - 7 AM).
 
 ## Setup & Installation
 
-*(Instructions on how to set up the bot, configure the Telegram API token, etc. will go here. This typically involves cloning the repository, setting environment variables, and building/running the Rust application.)*
+1. **Clone the repository:**
 
-```bash
-# Example placeholder commands
-git clone https://github.com/your-username/luzern-velox-vibebot.git
-cd luzern-velox-vibebot
-# Set environment variables (e.g., TELEGRAM_BOT_TOKEN)
-export TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN"
-cargo build --release
-./target/release/luzern-velox-vibebot
-```
+    ```bash
+    git clone https://github.com/your-username/luzern-velox-vibebot.git
+    cd luzern-velox-vibebot
+    ```
+
+2. **Configure Environment Variables:**
+    The bot requires your Telegram Bot Token and the target Chat ID. You can provide these using a `.env` file in the project root.
+    * Copy the example file:
+
+        ```bash
+        cp .env.example .env
+        ```
+
+    * Edit the `.env` file and add your actual token and chat ID:
+
+        ```dotenv
+        # .env
+        TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN_HERE
+        TELEGRAM_CHAT_ID=YOUR_CHAT_ID_HERE
+        # Optional: Set log level (e.g., RUST_LOG=debug)
+        ```
+
+    * Alternatively, you can still set these as system environment variables. The `.env` file takes precedence if it exists.
+3. **Build the application:**
+
+    ```bash
+    cargo build --release
+    ```
+
+4. **Run the bot:**
+
+    ```bash
+    ./target/release/luzern-velox-vibebot
+    ```
 
 ## Usage
 
@@ -68,7 +93,7 @@ For running the bot reliably as a background service on Linux systems, a systemd
 
 1. **Create the Service File:** Create a file named `luzern-velox-vibebot.service` in `/etc/systemd/system/` with content similar to the example below. You might need `sudo` privileges.
 2. **Customize:** Adjust paths (especially `WorkingDirectory` and `ExecStart`) and `User`/`Group` to match your setup. Ensure the specified user has the necessary permissions to run the bot and access its data files (like `known_cameras.json` and the user list).
-3. **Environment Variables:** Set the `TELEGRAM_BOT_TOKEN` and any other required environment variables either directly in the service file using `Environment="VAR=value"` directives or in a separate environment file specified by `EnvironmentFile=`. Using an environment file is generally recommended for sensitive data like API tokens.
+3. **Environment Variables:** The bot reads configuration from a `.env` file in its `WorkingDirectory` by default. Ensure the `.env` file (created during setup) is present in the `WorkingDirectory` specified below and contains the necessary `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Alternatively, you can set environment variables directly using `Environment="VAR=value"` directives in the service file, or specify a different environment file using `EnvironmentFile=`. The `.env` file in the working directory takes precedence if found.
 4. **Enable & Start:**
 
     ```bash
@@ -96,11 +121,10 @@ Group=your_group
 # Set the working directory to the project root
 WorkingDirectory=/home/alessandro/git/luzern-velox-vibebot # <-- ADJUST THIS PATH
 
-# Set required environment variables
-# It's often better to use EnvironmentFile= for secrets
-Environment="RUST_LOG=info" # Example: Set log level
-Environment="TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN" # <-- SET YOUR TOKEN HERE
-# EnvironmentFile=/path/to/your/.env
+# Environment variables are typically loaded from the .env file in WorkingDirectory.
+# You can override or set them here if needed, or use EnvironmentFile=.
+# Example: Environment="RUST_LOG=debug"
+# Example: EnvironmentFile=/etc/luzern-velox-vibebot/config
 
 # Command to execute
 # Ensure the binary is built and located here

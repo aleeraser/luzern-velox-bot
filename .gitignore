@@ -1,2 +1,4 @@
 /target
 known_cameras.json
+.env
+*.service
