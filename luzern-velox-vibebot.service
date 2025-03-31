@@ -12,11 +12,13 @@ Group=your_group
 # Set the working directory to the project root
 WorkingDirectory=/home/alessandro/git/luzern-velox-vibebot # <-- ADJUST THIS PATH
 
-# Set required environment variables
-# It's often better to use EnvironmentFile= for secrets
-Environment="RUST_LOG=info" # Example: Set log level
-Environment="TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN" # <-- SET YOUR TOKEN HERE
-# EnvironmentFile=/path/to/your/.env
+# Environment variables (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, RUST_LOG)
+# are expected to be loaded from the .env file located in the WorkingDirectory.
+# Ensure the .env file exists and is configured correctly.
+# Alternatively, uncomment and use EnvironmentFile= to specify a different path,
+# or use Environment="VAR=value" directives here (less recommended for secrets).
+# Example: EnvironmentFile=/etc/luzern-velox-vibebot/config
+# Example: Environment="RUST_LOG=debug"
 
 # Command to execute
 # Ensure the binary is built and located here
