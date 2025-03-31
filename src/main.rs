@@ -86,9 +86,10 @@ fn save_subscribed_chats<P: AsRef<Path>>(path: P, chats: &HashSet<ChatId>) -> Re
 enum Command {
     #[command(description = "Start receiving notifications.")]
     Start,
+    #[command(description = "Show the current list of known speed cameras.")]
+    CurrentList,
     // Add other commands here later
     // Help,
-    // CurrentList,
     // NotifyNoUpdates,
     // ManualUpdate,
 }
@@ -126,9 +127,30 @@ async fn handle_command(
                 log::info!("Chat ID {} is already subscribed.", chat_id);
                 bot.send_message(chat_id, "You are already subscribed.").await?;
             }
+        }
+        Command::CurrentList => {
+            let chat_id = msg.chat.id;
+            log::info!("Received /current_list command from chat ID: {}", chat_id);
+
+            match load_known_cameras(KNOWN_CAMERAS_FILE_PATH) {
+                Ok(cameras) => {
+                    let message = if cameras.is_empty() {
+                        "Currently, no speed cameras are known or the list is empty.".to_string()
+                    } else {
+                        let mut sorted_cameras: Vec<String> = cameras.iter().cloned().collect();
+                        sorted_cameras.sort_unstable();
+                        format!("Current known speed cameras:\n\n{}", sorted_cameras.join("\n"))
+                    };
+                    bot.send_message(chat_id, message).await?;
+                    log::info!("Sent current camera list to chat ID: {}", chat_id);
+                }
+                Err(e) => {
+                    log::error!("Failed to load known cameras for /current_list: {:?}", e);
+                    bot.send_message(chat_id, "Sorry, I couldn't retrieve the current camera list due to an error.").await?;
+                }
+            }
         } // Add handlers for other commands here later
           // Command::Help => { ... }
-          // Command::CurrentList => { ... }
           // Command::NotifyNoUpdates => { ... }
           // Command::ManualUpdate => { ... }
     }
