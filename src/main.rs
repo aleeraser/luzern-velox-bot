@@ -116,11 +116,11 @@ fn save_user_preferences<P: AsRef<Path>>(path: P, preferences: &UserPreferences)
 enum Command {
     #[command(description = "Start receiving notifications.")]
     Start,
-    #[command(description = "Show the current list of known speed cameras.")]
+    #[command(description = "Show the current list of known speed cameras.", rename = "current_list")]
     CurrentList,
-    #[command(description = "Toggle notifications for checks with no new cameras.")]
+    #[command(description = "Toggle notifications for checks with no new cameras.", rename = "notify_no_updates")]
     NotifyNoUpdates,
-    #[command(description = "Trigger an immediate check for new speed cameras.")]
+    #[command(description = "Trigger an immediate check for new speed cameras.", rename = "manual_update")]
     ManualUpdate,
     // Add other commands here later
     // Help,
