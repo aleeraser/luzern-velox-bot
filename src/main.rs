@@ -2,45 +2,47 @@ use reqwest;
 use scraper::{Html, Selector};
 use std::collections::HashSet;
 use std::fs;
-use std::io::{self, ErrorKind};
+use std::io::ErrorKind; // Removed unused `self` import
 use std::env; // Added for environment variables
 use tokio;
 use teloxide::{prelude::*, types::ChatId}; // Added for Teloxide
+use anyhow::{Context, Result}; // Import anyhow
 
 const STATE_FILE_PATH: &str = "known_cameras.json";
 
 // Function to load known cameras from the state file
-fn load_known_cameras(path: &str) -> io::Result<HashSet<String>> {
+fn load_known_cameras(path: &str) -> Result<HashSet<String>> { // Changed return type
     match fs::read_to_string(path) {
         Ok(content) => {
             if content.is_empty() {
                 Ok(HashSet::new())
             } else {
                 serde_json::from_str(&content)
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+                    .with_context(|| format!("Failed to parse JSON from {}", path)) // Added context
             }
         }
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(HashSet::new()), // File not found is okay, start fresh
-        Err(e) => Err(e),
+        Err(e) => Err(anyhow::Error::from(e)).with_context(|| format!("Failed to read state file {}", path)), // Added context and wrapped error
     }
 }
 
 // Function to save known cameras to the state file, sorted alphabetically
-fn save_known_cameras(path: &str, cameras: &HashSet<String>) -> io::Result<()> {
+fn save_known_cameras(path: &str, cameras: &HashSet<String>) -> Result<()> { // Changed return type
     // Convert HashSet to a Vec and sort it
     let mut sorted_cameras: Vec<String> = cameras.iter().cloned().collect();
     sorted_cameras.sort_unstable(); // Use unstable sort for potentially better performance
 
     // Serialize the sorted Vec
     let content = serde_json::to_string_pretty(&sorted_cameras)
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        .with_context(|| "Failed to serialize camera list to JSON")?; // Added context
     fs::write(path, content)
+        .with_context(|| format!("Failed to write state file {}", path)) // Added context
 }
 
 use dotenvy; // Added for .env file loading
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> { // Changed return type
     // Load .env file if it exists. Variables in .env will override system env vars.
     match dotenvy::dotenv() {
         Ok(path) => log::info!("Loaded .env file from path: {}", path.display()),
@@ -57,8 +59,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get chat ID from environment variable
     let chat_id_str = env::var("TELEGRAM_CHAT_ID")
-        .expect("TELEGRAM_CHAT_ID environment variable not set");
-    let chat_id = ChatId(chat_id_str.parse::<i64>()?); // Parse the chat ID string to i64
+        .context("TELEGRAM_CHAT_ID environment variable not set")?; // Replaced expect with context
+    let chat_id = ChatId(chat_id_str.parse::<i64>()
+        .with_context(|| format!("Failed to parse TELEGRAM_CHAT_ID '{}' as integer", chat_id_str))?); // Added context
     log::info!("Bot initialized. Target chat ID: {}", chat_id_str);
 
 
@@ -66,23 +69,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Fetching URL: {}", url);
 
     // Load previously known cameras
-    let known_cameras = load_known_cameras(STATE_FILE_PATH)?; // Removed 'mut'
+    let known_cameras = load_known_cameras(STATE_FILE_PATH)?;
     log::info!("Loaded {} known cameras from {}", known_cameras.len(), STATE_FILE_PATH);
 
-    let response = reqwest::get(url).await?;
+    let response = reqwest::get(url).await
+        .with_context(|| format!("Failed to send GET request to {}", url))?; // Added context
 
     if !response.status().is_success() {
-        log::error!("Failed to fetch URL: {}", response.status());
-        // Don't save state if fetch failed
-        return Ok(());
+        // Log the error and exit gracefully without updating state
+        log::error!("Failed to fetch URL {}: Status {}", url, response.status());
+        // Using anyhow::bail! to return an error immediately
+        anyhow::bail!("HTTP request failed with status: {}", response.status());
     }
 
-    let body = response.text().await?;
+    let body = response.text().await
+        .with_context(|| format!("Failed to read response body from {}", url))?; // Added context
     log::info!("Successfully fetched HTML content.");
 
     let document = Html::parse_document(&body);
     let selector_str = "#radarList li > a";
-    let selector = Selector::parse(selector_str).expect("Failed to parse selector");
+    let selector = Selector::parse(selector_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse CSS selector '{}': {:?}", selector_str, e))?; // Replaced expect with anyhow error
 
     log::info!("Extracting current camera locations...");
     let mut current_cameras = HashSet::new();
