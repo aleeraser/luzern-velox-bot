@@ -402,9 +402,23 @@ async fn main() -> Result<()> {
                 Err(e) => log::error!("Scheduled check failed: {:?}", e),
             }
 
-            // --- Wait for the next interval ---
-            log::info!("Sleeping for 30 minutes until the next scheduled check.");
-            sleep(Duration::from_secs(30 * 60)).await; // Sleep for 30 minutes
+            // --- Wait for the next interval (:00 or :30) ---
+            let now_after_check = Local::now();
+            let current_minute = now_after_check.minute();
+            let seconds_until_next_mark = if current_minute < 30 {
+                // Next check is at :30 of the current hour
+                (30 - current_minute) * 60 - now_after_check.second()
+            } else {
+                // Next check is at :00 of the next hour
+                (60 - current_minute) * 60 - now_after_check.second()
+            };
+
+            // Ensure we sleep for at least a few seconds to avoid busy-looping if the check was very fast
+            let sleep_duration_secs = std::cmp::max(5, seconds_until_next_mark); // Minimum 5 seconds sleep
+            let sleep_duration = Duration::from_secs(sleep_duration_secs as u64);
+
+            log::info!("Sleeping for {:?} until the next scheduled check.", sleep_duration);
+            sleep(sleep_duration).await;
         }
     });
 
