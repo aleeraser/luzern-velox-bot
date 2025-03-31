@@ -118,9 +118,10 @@ enum Command {
     CurrentList,
     #[command(description = "Toggle notifications for checks with no new cameras.")]
     NotifyNoUpdates,
+    #[command(description = "Trigger an immediate check for new speed cameras.")]
+    ManualUpdate,
     // Add other commands here later
     // Help,
-    // ManualUpdate,
 }
 
 // --- Command Handler ---
@@ -208,11 +209,116 @@ async fn handle_command(
                 bot.send_message(chat_id, message).await?;
             }
         }
+        Command::ManualUpdate => {
+            log::info!("Received /manual_update command from chat ID: {}", chat_id);
+            bot.send_message(chat_id, "Starting manual update check...").await?;
+
+            // Call the update check logic
+            // We need to pass the necessary shared state here
+            match check_for_updates(bot.clone(), subscribed_chats.clone(), user_preferences.clone()).await {
+                Ok(status_message) => {
+                    log::info!("Manual update check completed for chat ID {}: {}", chat_id, status_message);
+                    bot.send_message(chat_id, status_message).await?;
+                }
+                Err(e) => {
+                    log::error!("Manual update check failed for chat ID {}: {:?}", chat_id, e);
+                    bot.send_message(chat_id, format!("Manual update check failed: {}", e)).await?;
+                }
+            }
+        }
         // Add handlers for other commands here later
         // Command::Help => { ... }
-        // Command::ManualUpdate => { ... }
     }
     Ok(())
+}
+
+
+// --- Camera Update Logic ---
+
+// Placeholder for the actual web scraping logic
+async fn fetch_current_cameras() -> Result<HashSet<String>> {
+    // In a real implementation, this would use reqwest and scraper
+    // to fetch and parse the HTML from the Luzern Police website.
+    // Example data:
+    let cameras = HashSet::new();
+    // cameras.insert("Luzern, Example Street 1".to_string());
+    // cameras.insert("Emmenbrücke, Test Road 2".to_string());
+    Ok(cameras)
+    // Err(anyhow!("Placeholder: Scraping not implemented"))
+}
+
+// Function to perform the update check and notify users
+async fn check_for_updates(
+    bot: Bot,
+    subscribed_chats: SharedSubscribedChats,
+    user_preferences: SharedUserPreferences,
+) -> Result<String> {
+    log::info!("Starting update check...");
+
+    let current_cameras = fetch_current_cameras().await
+        .context("Failed to fetch current cameras from website")?;
+    log::debug!("Fetched cameras: {:?}", current_cameras);
+
+    let known_cameras = load_known_cameras(KNOWN_CAMERAS_FILE_PATH)
+        .context("Failed to load known cameras")?;
+    log::debug!("Loaded known cameras: {:?}", known_cameras);
+
+    let new_cameras: HashSet<String> = current_cameras.difference(&known_cameras).cloned().collect();
+    log::info!("Found {} new cameras.", new_cameras.len());
+
+    let chats_to_notify = subscribed_chats.lock().await;
+    let preferences = user_preferences.lock().await;
+
+    if !new_cameras.is_empty() {
+        let mut sorted_new_cameras: Vec<String> = new_cameras.iter().cloned().collect();
+        sorted_new_cameras.sort_unstable();
+        let message = format!(
+            "🚨 New speed camera(s) detected in Luzern:\n\n{}",
+            sorted_new_cameras.join("\n")
+        );
+
+        log::info!("Saving updated camera list...");
+        if let Err(e) = save_known_cameras(KNOWN_CAMERAS_FILE_PATH, &current_cameras) {
+            log::error!("Failed to save updated known cameras: {:?}", e);
+            // Decide if we should still try to notify or return error
+            // For now, log the error and continue notifying
+        } else {
+            log::info!("Successfully saved updated camera list.");
+        }
+
+        log::info!("Notifying {} subscribed chats about new cameras...", chats_to_notify.len());
+        for chat_id in chats_to_notify.iter() {
+            match bot.send_message(*chat_id, message.clone()).await {
+                Ok(_) => log::debug!("Sent new camera notification to chat ID: {}", chat_id),
+                Err(e) => log::error!("Failed to send new camera notification to chat ID {}: {:?}", chat_id, e),
+            }
+            // Add a small delay to avoid hitting rate limits, if necessary
+            // tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
+        Ok(format!("Update check complete. Found {} new camera(s). Notifications sent.", new_cameras.len()))
+
+    } else {
+        log::info!("No new cameras detected.");
+        log::info!("Checking preferences for 'no update' notifications for {} chats...", chats_to_notify.len());
+
+        let message = "Update check complete. No new speed cameras detected.".to_string();
+
+        for chat_id in chats_to_notify.iter() {
+            // Get preference, default to false (don't notify if no updates)
+            let should_notify = preferences.get(chat_id).copied().unwrap_or(false);
+            if should_notify {
+                 match bot.send_message(*chat_id, message.clone()).await {
+                    Ok(_) => log::debug!("Sent 'no update' notification to chat ID: {}", chat_id),
+                    Err(e) => log::error!("Failed to send 'no update' notification to chat ID {}: {:?}", chat_id, e),
+                }
+                // Add a small delay if needed
+                // tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            } else {
+                log::debug!("Skipping 'no update' notification for chat ID {} based on preferences.", chat_id);
+            }
+        }
+        Ok(message) // Return the status message for the manual trigger
+    }
 }
 
 
@@ -263,8 +369,6 @@ async fn main() -> Result<()> {
     log::info!("Bot stopped.");
     Ok(())
 
-    // TODO: Re-integrate camera checking logic, likely triggered by a timer or /manual_update command
-    // The previous logic for fetching/comparing/notifying needs to be moved into a separate function
-    // and called appropriately (e.g., in a loop with tokio::time::sleep or triggered by a command).
-    // The notification part will need to iterate over the `subscribed_chats` set.
+    // Note: The periodic checking logic (Milestone 15) is still needed.
+    // It would typically run in a separate task/loop calling `check_for_updates`.
 }
