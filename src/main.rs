@@ -25,9 +25,14 @@ fn load_known_cameras(path: &str) -> io::Result<HashSet<String>> {
     }
 }
 
-// Function to save known cameras to the state file
+// Function to save known cameras to the state file, sorted alphabetically
 fn save_known_cameras(path: &str, cameras: &HashSet<String>) -> io::Result<()> {
-    let content = serde_json::to_string_pretty(cameras)
+    // Convert HashSet to a Vec and sort it
+    let mut sorted_cameras: Vec<String> = cameras.iter().cloned().collect();
+    sorted_cameras.sort_unstable(); // Use unstable sort for potentially better performance
+
+    // Serialize the sorted Vec
+    let content = serde_json::to_string_pretty(&sorted_cameras)
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     fs::write(path, content)
 }
@@ -101,9 +106,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log::info!("No new cameras detected.");
     } else {
         log::info!("New cameras detected:");
+        // Sort the new cameras alphabetically before creating the message
+        new_cameras.sort_unstable();
         let mut message_text = String::from("🚨 Neue Blitzerstandorte in Luzern:\n");
         for camera in &new_cameras {
-            log::info!("- {}", camera);
+            log::info!("- {}", camera); // Log sorted order as well
             message_text.push_str(&format!("- {}\n", camera));
         }
 
