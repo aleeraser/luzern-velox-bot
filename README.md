@@ -32,10 +32,13 @@ Here's a breakdown of the planned development steps:
 6. **Error Handling & Logging:** Implement robust error handling and basic logging.
 7. **Build & Deployment:** Document build steps and basic deployment guidance.
 8. **Refine dependencies:** Remove unnecessary dependencies.
-9. **Implement User Commands:** Add handlers for `/start`, `/current_list`, `/notify_no_updates`, `/manual_update`.
-10. **Persistent User Storage:** Implement saving/loading of chat IDs and notification preferences.
-11. **Systemd Integration:** Check systemd service file and instructions.
-12. **Implement Scheduling Logic:** Add polling (every 30 mins) and scheduled downtime (2 AM - 7 AM).
+9. **Implement `/start` command:** Add handler to subscribe users for notifications.
+10. **Implement `/current_list` command:** Add handler to display the current list of known cameras.
+11. **Implement `/notify_no_updates` command:** Add handler to toggle notifications for checks with no new cameras.
+12. **Implement `/manual_update` command:** Add handler to trigger an immediate update check.
+13. **Persistent User Storage:** Implement saving/loading of chat IDs and notification preferences.
+14. **Systemd Integration:** Check systemd service file and instructions.
+15. **Implement Scheduling Logic:** Add polling (every 30 mins) and scheduled downtime (2 AM - 7 AM).
 
 ## Setup & Installation
 
