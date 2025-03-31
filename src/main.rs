@@ -1,10 +1,11 @@
 use reqwest;
 use scraper::{Html, Selector};
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, ErrorKind};
+use std::env; // Added for environment variables
 use tokio;
+use teloxide::{prelude::*, types::ChatId}; // Added for Teloxide
 
 const STATE_FILE_PATH: &str = "known_cameras.json";
 
@@ -33,48 +34,62 @@ fn save_known_cameras(path: &str, cameras: &HashSet<String>) -> io::Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging
+    pretty_env_logger::init();
+    log::info!("Starting bot..."); // Use log crate for logging
+
+    // Initialize Teloxide bot
+    let bot = Bot::from_env(); // Reads TELEGRAM_BOT_TOKEN from env
+
+    // Get chat ID from environment variable
+    let chat_id_str = env::var("TELEGRAM_CHAT_ID")
+        .expect("TELEGRAM_CHAT_ID environment variable not set");
+    let chat_id = ChatId(chat_id_str.parse::<i64>()?); // Parse the chat ID string to i64
+    log::info!("Bot initialized. Target chat ID: {}", chat_id_str);
+
+
     let url = "https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen";
-    println!("Fetching URL: {}", url);
+    log::info!("Fetching URL: {}", url);
 
     // Load previously known cameras
-    let mut known_cameras = load_known_cameras(STATE_FILE_PATH)?;
-    println!("Loaded {} known cameras from {}", known_cameras.len(), STATE_FILE_PATH);
+    let known_cameras = load_known_cameras(STATE_FILE_PATH)?; // Removed 'mut'
+    log::info!("Loaded {} known cameras from {}", known_cameras.len(), STATE_FILE_PATH);
 
     let response = reqwest::get(url).await?;
 
     if !response.status().is_success() {
-        eprintln!("Failed to fetch URL: {}", response.status());
+        log::error!("Failed to fetch URL: {}", response.status());
         // Don't save state if fetch failed
         return Ok(());
     }
 
     let body = response.text().await?;
-    println!("Successfully fetched HTML content.");
+    log::info!("Successfully fetched HTML content.");
 
     let document = Html::parse_document(&body);
     let selector_str = "#radarList li > a";
     let selector = Selector::parse(selector_str).expect("Failed to parse selector");
 
-    println!("\nExtracting current camera locations...");
+    log::info!("Extracting current camera locations...");
     let mut current_cameras = HashSet::new();
     let mut found_any_cameras = false;
     for element in document.select(&selector) {
         let text = element.text().collect::<Vec<_>>().join(" ").trim().to_string();
         if !text.is_empty() && text != "Kantonsübersicht zurücksetzen" {
-            println!("- Found: {}", text);
+            log::debug!("- Found: {}", text); // Changed to debug level
             current_cameras.insert(text);
             found_any_cameras = true;
         }
     }
 
     if !found_any_cameras {
-        println!("No camera data found on the page. Check selector or page structure.");
+        log::warn!("No camera data found on the page. Check selector or page structure."); // Changed to warn level
         // Optionally decide if state should be cleared or kept
         // For now, we'll keep the old state if nothing is found
         return Ok(());
     }
 
-    println!("\nComparing with known cameras...");
+    log::info!("Comparing with known cameras...");
     let mut new_cameras = Vec::new();
     for camera in &current_cameras {
         if !known_cameras.contains(camera) {
@@ -83,22 +98,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if new_cameras.is_empty() {
-        println!("No new cameras detected.");
+        log::info!("No new cameras detected.");
     } else {
-        println!("New cameras detected:");
+        log::info!("New cameras detected:");
+        let mut message_text = String::from("🚨 Neue Blitzerstandorte in Luzern:\n");
         for camera in &new_cameras {
-            println!("- {}", camera);
-            // Here you would trigger the Telegram notification in a later step
+            log::info!("- {}", camera);
+            message_text.push_str(&format!("- {}\n", camera));
+        }
+
+        // Send notification via Telegram
+        match bot.send_message(chat_id, &message_text).await {
+            Ok(_) => log::info!("Successfully sent notification to chat ID {}", chat_id),
+            Err(e) => log::error!("Failed to send Telegram message: {}", e),
         }
     }
 
     // Update known cameras state only if the fetch and parse were successful
     if known_cameras != current_cameras {
-        println!("Updating state file {}...", STATE_FILE_PATH);
+        log::info!("Updating state file {}...", STATE_FILE_PATH);
         save_known_cameras(STATE_FILE_PATH, &current_cameras)?;
-        println!("State file updated successfully.");
+        log::info!("State file updated successfully.");
     } else {
-        println!("No changes in camera list, state file not updated.");
+        log::info!("No changes in camera list, state file not updated.");
     }
 
 
