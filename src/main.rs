@@ -37,9 +37,18 @@ fn save_known_cameras(path: &str, cameras: &HashSet<String>) -> io::Result<()> {
     fs::write(path, content)
 }
 
+use dotenvy; // Added for .env file loading
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
+    // Load .env file if it exists. Variables in .env will override system env vars.
+    match dotenvy::dotenv() {
+        Ok(path) => log::info!("Loaded .env file from path: {}", path.display()),
+        Err(e) if e.not_found() => log::info!(".env file not found, using system environment variables."),
+        Err(e) => log::warn!("Failed to load .env file: {}", e), // Warn but continue
+    }
+
+    // Initialize logging (after loading .env, so RUST_LOG from .env is used)
     pretty_env_logger::init();
     log::info!("Starting bot..."); // Use log crate for logging
 
