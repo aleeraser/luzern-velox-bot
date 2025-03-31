@@ -32,6 +32,7 @@ Here's a breakdown of the planned development steps:
 6. **Configuration:** Read settings (API token, chat ID) from environment variables or a config file.
 7. **Error Handling & Logging:** Implement robust error handling and basic logging.
 8. **Build & Deployment:** Document build steps and basic deployment guidance.
+9. **Refine dependencies:** Remove unnecessary dependencies
 
 ## Setup & Installation
 
