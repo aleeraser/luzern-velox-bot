@@ -152,6 +152,4 @@ Contributions are welcome! Please feel free to submit pull requests or open issu
 
 ## License
 
-*(Specify the license under which this project is released, e.g., MIT, Apache 2.0. If undecided, you can leave this as a placeholder.)*
-
 This project is licensed under the [MIT License](LICENSE).
