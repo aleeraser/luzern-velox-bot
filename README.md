@@ -32,7 +32,10 @@ Here's a breakdown of the planned development steps:
 6. **Configuration:** Read settings (API token, chat ID) from environment variables or a config file.
 7. **Error Handling & Logging:** Implement robust error handling and basic logging.
 8. **Build & Deployment:** Document build steps and basic deployment guidance.
-9. **Refine dependencies:** Remove unnecessary dependencies
+9. **Refine dependencies:** Remove unnecessary dependencies.
+10. **Implement User Commands:** Add handlers for `/start`, `/current_list`, `/notify_no_updates`, `/manual_update`.
+11. **Persistent User Storage:** Implement saving/loading of chat IDs and notification preferences.
+12. **Systemd Integration:** Check systemd service file and instructions.
 
 ## Setup & Installation
 
@@ -50,9 +53,71 @@ cargo build --release
 
 ## Usage
 
-*(Details on how users interact with the bot, if applicable (e.g., commands like /subscribe, /status). If it's purely notification-based, this section might be brief.)*
+The bot responds to the following commands:
 
-Once set up and running, the bot will automatically send notifications to the configured Telegram chat ID when new speed cameras are detected.
+* `/start`: Enables the bot for the user sending the command. The user's chat ID is saved to a persistent list of subscribed users.
+* `/current_list`: Returns a message listing the currently known active speed camera locations.
+* `/notify_no_updates`: Toggles notifications for when the update check runs but finds no changes. This preference is stored per user.
+* `/manual_update`: Triggers an immediate check for speed camera updates, independent of the regular schedule.
+
+If no commands are used, the bot will automatically send notifications to subscribed users when new speed cameras are detected based on its schedule.
+
+## Systemd Service
+
+For running the bot reliably as a background service on Linux systems, a systemd service unit can be used.
+
+1. **Create the Service File:** Create a file named `luzern-velox-vibebot.service` in `/etc/systemd/system/` with content similar to the example below. You might need `sudo` privileges.
+2. **Customize:** Adjust paths (especially `WorkingDirectory` and `ExecStart`) and `User`/`Group` to match your setup. Ensure the specified user has the necessary permissions to run the bot and access its data files (like `known_cameras.json` and the user list).
+3. **Environment Variables:** Set the `TELEGRAM_BOT_TOKEN` and any other required environment variables either directly in the service file using `Environment="VAR=value"` directives or in a separate environment file specified by `EnvironmentFile=`. Using an environment file is generally recommended for sensitive data like API tokens.
+4. **Enable & Start:**
+
+    ```bash
+    sudo systemctl daemon-reload                 # Reload systemd manager configuration
+    sudo systemctl enable luzern-velox-vibebot.service # Enable the service to start on boot
+    sudo systemctl start luzern-velox-vibebot.service  # Start the service immediately
+    sudo systemctl status luzern-velox-vibebot.service # Check the service status
+    journalctl -u luzern-velox-vibebot.service -f    # Follow the service logs
+    ```
+
+**Example `luzern-velox-vibebot.service`:**
+
+```ini
+[Unit]
+Description=Luzern Velox Vibebot Telegram Bot
+# Start after the network is available
+After=network.target
+
+[Service]
+# User and Group that the service will run as
+# Ensure this user has read/write permissions for WorkingDirectory and the executable
+User=your_user
+Group=your_group
+
+# Set the working directory to the project root
+WorkingDirectory=/home/alessandro/git/luzern-velox-vibebot # <-- ADJUST THIS PATH
+
+# Set required environment variables
+# It's often better to use EnvironmentFile= for secrets
+Environment="RUST_LOG=info" # Example: Set log level
+Environment="TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN" # <-- SET YOUR TOKEN HERE
+# EnvironmentFile=/path/to/your/.env
+
+# Command to execute
+# Ensure the binary is built and located here
+ExecStart=/home/alessandro/git/luzern-velox-vibebot/target/release/luzern-velox-vibebot # <-- ADJUST THIS PATH if needed
+
+# Restart the service if it fails
+Restart=on-failure
+RestartSec=5s
+
+# Standard output and error logging configuration
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# Enable the service for the default multi-user target
+WantedBy=multi-user.target
+```
 
 ## Contributing
 
