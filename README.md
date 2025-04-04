@@ -113,7 +113,7 @@ For running the bot reliably as a background service on Linux systems, a systemd
 [Unit]
 Description=Luzern Velox Vibebot Telegram Bot
 # Start after the network is available
-After=network.target
+After=network-online.target
 
 [Service]
 # User and Group that the service will run as
@@ -122,7 +122,7 @@ User=your_user
 Group=your_group
 
 # Set the working directory to the project root
-WorkingDirectory=/home/alessandro/git/luzern-velox-vibebot # <-- ADJUST THIS PATH
+WorkingDirectory=$HOME/git/luzern-velox-vibebot # <-- ADJUST THIS PATH
 
 # Environment variables are typically loaded from the .env file in WorkingDirectory.
 # You can override or set them here if needed, or use EnvironmentFile=.
@@ -131,15 +131,11 @@ WorkingDirectory=/home/alessandro/git/luzern-velox-vibebot # <-- ADJUST THIS PAT
 
 # Command to execute
 # Ensure the binary is built and located here
-ExecStart=/home/alessandro/git/luzern-velox-vibebot/target/release/luzern-velox-vibebot # <-- ADJUST THIS PATH if needed
+ExecStart=$HOME/git/luzern-velox-vibebot/target/release/luzern-velox-vibebot # <-- ADJUST THIS PATH if needed
 
 # Restart the service if it fails
 Restart=on-failure
-RestartSec=5s
-
-# Standard output and error logging configuration
-StandardOutput=journal
-StandardError=journal
+RestartSec=30s
 
 [Install]
 # Enable the service for the default multi-user target
