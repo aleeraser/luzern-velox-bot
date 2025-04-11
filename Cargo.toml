@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 reqwest = "0.12.15" # For making HTTP requests to fetch the website content
 scraper = "0.23.1" # For parsing HTML and extracting data using CSS selectors
-teloxide = "0.14.1" # Telegram bot framework
+teloxide = { version = "0.14.1", features = ["macros"] } # Telegram bot framework with command macros enabled
 tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread"] } # Asynchronous runtime for Rust
 serde = { version = "1.0", features = ["derive"] } # Framework for serializing and deserializing Rust data structures efficiently and generically
 serde_json = "1.0" # For serializing and deserializing data to/from JSON format (used for state file)
@@ -15,3 +15,4 @@ log = "0.4" # Logging facade for Rust applications
 dotenvy = "0.15" # For loading environment variables from a .env file
 anyhow = "1.0" # For flexible error handling with context
 clap = { version = "4.5", features = ["derive"] } # For command-line argument parsing
+futures = "0.3" # Added for future::join_all
