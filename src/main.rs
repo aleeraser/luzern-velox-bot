@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use clap::Parser; // Added for command-line argument parsing
 use dotenvy;
 use log;
 use pretty_env_logger;
@@ -14,7 +15,17 @@ use tokio;
 
 const STATE_FILE_PATH: &str = "known_cameras.json";
 const CAMERA_LIST_URL: &str = "https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen";
+const OFFLINE_FILE_PATH: &str = "velox_page.html"; // Path to the local HTML file
 const CAMERA_SELECTOR: &str = "#radarList li > a";
+
+// Command-line arguments structure
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Run in offline mode, reading from a local file instead of fetching the URL
+    #[arg(short, long)]
+    offline: bool,
+}
 
 // Configuration struct to hold application settings
 struct Config {
@@ -79,21 +90,27 @@ async fn init_logging_and_config() -> Result<Config> {
     Ok(Config { bot, chat_id })
 }
 
-// Fetch the webpage and parse out the current camera locations
-async fn fetch_and_parse_cameras() -> Result<HashSet<String>> {
-    log::info!("Fetching URL: {}", CAMERA_LIST_URL);
+// Fetch the webpage (or read from file) and parse out the current camera locations
+async fn fetch_and_parse_cameras(offline_mode: bool) -> Result<HashSet<String>> {
+    let body = if offline_mode {
+        log::info!("Running in offline mode. Reading from file: {}", OFFLINE_FILE_PATH);
+        fs::read_to_string(OFFLINE_FILE_PATH)
+            .with_context(|| format!("Failed to read offline file {}", OFFLINE_FILE_PATH))?
+    } else {
+        log::info!("Fetching URL: {}", CAMERA_LIST_URL);
+        let response = reqwest::get(CAMERA_LIST_URL).await
+            .with_context(|| format!("Failed to send GET request to {}", CAMERA_LIST_URL))?;
 
-    let response = reqwest::get(CAMERA_LIST_URL).await
-        .with_context(|| format!("Failed to send GET request to {}", CAMERA_LIST_URL))?;
+        if !response.status().is_success() {
+            log::error!("Failed to fetch URL {}: Status {}", CAMERA_LIST_URL, response.status());
+            anyhow::bail!("HTTP request failed with status: {}", response.status());
+        }
 
-    if !response.status().is_success() {
-        log::error!("Failed to fetch URL {}: Status {}", CAMERA_LIST_URL, response.status());
-        anyhow::bail!("HTTP request failed with status: {}", response.status());
-    }
-
-    let body = response.text().await
-        .with_context(|| format!("Failed to read response body from {}", CAMERA_LIST_URL))?;
-    log::info!("Successfully fetched HTML content.");
+        let online_body = response.text().await
+            .with_context(|| format!("Failed to read response body from {}", CAMERA_LIST_URL))?;
+        log::info!("Successfully fetched HTML content online.");
+        online_body
+    };
 
     let document = Html::parse_document(&body);
     let selector = Selector::parse(CAMERA_SELECTOR)
@@ -177,15 +194,14 @@ fn update_state_file(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1. Initialize logging and load configuration
+    let cli = Cli::parse();
+
     let config = init_logging_and_config().await?;
 
-    // 2. Load previously known cameras
     let known_cameras = load_known_cameras(STATE_FILE_PATH)?;
     log::info!("Loaded {} known cameras from {}", known_cameras.len(), STATE_FILE_PATH);
 
-    // 3. Fetch and parse current cameras from the website
-    let current_cameras = fetch_and_parse_cameras().await?;
+    let current_cameras = fetch_and_parse_cameras(cli.offline).await?;
 
     // Exit early if no cameras were found on the page (logged in fetch_and_parse_cameras)
     if current_cameras.is_empty() {
@@ -193,10 +209,8 @@ async fn main() -> Result<()> {
          return Ok(());
     }
 
-    // 4. Compare current vs known cameras and notify via Telegram if new ones found
     compare_and_notify(&config, &current_cameras, &known_cameras).await?; // Pass config
 
-    // 5. Update the state file if the list has changed
     update_state_file(&current_cameras, &known_cameras)?;
 
     log::info!("Finished execution successfully.");
