@@ -48,6 +48,17 @@ async fn main() -> Result<()> {
     pretty_env_logger::init();
     log::info!("Starting bot...");
 
+    // Log variables specifically loaded from .env
+    log::debug!("Variables loaded from .env file:");
+    let env_vars_to_log = ["TELOXIDE_TOKEN", "TELEGRAM_CHAT_ID", "RUST_LOG"];
+    for var_name in env_vars_to_log {
+        match env::var(var_name) {
+            Ok(value) => log::debug!("  {} = {}", var_name, value),
+            Err(_) => log::warn!("  {} not found in environment", var_name), // Should not happen if .env loaded correctly
+        }
+    }
+
+
     let bot = Bot::from_env();
 
     let chat_id_str = env::var("TELEGRAM_CHAT_ID")
