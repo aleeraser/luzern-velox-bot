@@ -10,10 +10,16 @@ use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::ErrorKind;
-use teloxide::{prelude::*, types::ChatId, Bot};
+use teloxide::{prelude::*, dptree, types::{ChatId, Message}, utils::command::BotCommands, Bot}; // Added Message, dptree
+use teloxide::dispatching::HandlerExt; // Removed UpdateHandler
+// Removed DependencyMap import
 use tokio;
+use tokio::sync::RwLock; // Added for AppState
+use std::sync::Arc; // Added for AppState
+use futures::future; // More specific import for join_all
 
 const STATE_FILE_PATH: &str = "known_cameras.json";
+const SUBSCRIBERS_FILE_PATH: &str = "subscribers.json"; // Added for subscriber persistence
 const CAMERA_LIST_URL: &str = "https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen";
 const OFFLINE_FILE_PATH: &str = "velox_page.html"; // Path to the local HTML file
 const CAMERA_SELECTOR: &str = "#radarList li > a";
@@ -27,11 +33,61 @@ struct Cli {
     offline: bool,
 }
 
-// Configuration struct to hold application settings
-struct Config {
-    bot: Bot,
-    chat_id: ChatId,
+// Define the commands the bot understands
+#[derive(BotCommands, Clone, Debug)]
+#[command(rename_rule = "lowercase", description = "These commands are supported:")]
+enum Command {
+    #[command(description = "Subscribe to receive speed camera notifications.")]
+    Start,
+    // Other commands will be added here later
 }
+
+// Command handler for /start
+async fn start_command(bot: Bot, msg: Message, state: Arc<AppState>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let chat_id = msg.chat.id.0; // Get the i64 chat ID
+    log::info!("Received /start command from chat ID: {}", chat_id);
+
+    let mut subscribers = state.subscribers.write().await; // Acquire write lock
+
+    let newly_added = subscribers.insert(chat_id); // Add user, returns true if new
+
+    if newly_added {
+        log::info!("New subscriber added: {}", chat_id);
+        // Save the updated list persistently
+        // Release the write lock before saving to avoid holding it during potentially slow I/O
+        drop(subscribers); // Explicitly drop the write guard
+
+        // Clone the data out of the read lock to minimize lock duration and simplify borrowing
+        let subscribers_data = { // Create a scope for the read lock
+             let guard = state.subscribers.read().await;
+             guard.clone() // Clone the HashSet<i64>
+        }; // Read lock guard is dropped here
+
+        match save_subscribers(SUBSCRIBERS_FILE_PATH, &subscribers_data) { // Pass reference to cloned data
+             Ok(_) => log::info!("Successfully saved updated subscriber list."),
+             Err(e) => {
+                 log::error!("Failed to save subscriber list: {}", e);
+                 // Decide how critical this is. Maybe notify admin? For now, just log.
+                 // We could try to remove the user from the in-memory set if saving fails,
+                 // but that adds complexity. Let's keep it simple for now.
+             }
+        }
+        bot.send_message(msg.chat.id, "Subscription successful! You will now receive notifications about new speed cameras.").await?;
+    } else {
+        log::info!("User {} is already subscribed.", chat_id);
+        bot.send_message(msg.chat.id, "You are already subscribed.").await?;
+    }
+
+    Ok(())
+}
+
+
+// Shared application state
+struct AppState {
+    subscribers: RwLock<HashSet<i64>>, // Store ChatId.0 (i64)
+}
+
+// Removed Config struct as it's no longer needed
 
 fn load_known_cameras(path: &str) -> Result<HashSet<String>> {
     match fs::read_to_string(path) {
@@ -58,8 +114,37 @@ fn save_known_cameras(path: &str, cameras: &HashSet<String>) -> Result<()> {
         .with_context(|| format!("Failed to write state file {}", path))
 }
 
-// Initialize logging, load .env, and create the Config struct
-async fn init_logging_and_config() -> Result<Config> {
+// Load subscribed chat IDs from the JSON file
+fn load_subscribers(path: &str) -> Result<HashSet<i64>> {
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            if content.is_empty() {
+                Ok(HashSet::new())
+            } else {
+                serde_json::from_str(&content)
+                    .with_context(|| format!("Failed to parse subscriber JSON from {}", path))
+            }
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(HashSet::new()), // No file yet, return empty set
+        Err(e) => Err(anyhow::Error::from(e)).with_context(|| format!("Failed to read subscriber file {}", path)),
+    }
+}
+
+// Save subscribed chat IDs to the JSON file
+fn save_subscribers(path: &str, subscribers: &HashSet<i64>) -> Result<()> {
+    // Sort for consistent file output (optional but nice)
+    let mut sorted_subscribers: Vec<i64> = subscribers.iter().cloned().collect();
+    sorted_subscribers.sort_unstable();
+
+    let content = serde_json::to_string_pretty(&sorted_subscribers)
+        .with_context(|| "Failed to serialize subscriber list to JSON")?;
+    fs::write(path, content)
+        .with_context(|| format!("Failed to write subscriber file {}", path))
+}
+
+
+// Initialize logging and load .env
+fn init_logging() -> Result<()> { // No longer async, just initializes logger
     match dotenvy::dotenv() {
         Ok(path) => log::info!("Loaded .env file from path: {}", path.display()),
         Err(e) if e.not_found() => log::info!(".env file not found, using system environment variables."),
@@ -79,15 +164,10 @@ async fn init_logging_and_config() -> Result<Config> {
         }
     }
 
-    let bot = Bot::from_env();
+    // Removed TELEGRAM_CHAT_ID loading logic
+    // Bot initialization will happen in main
 
-    let chat_id_str = env::var("TELEGRAM_CHAT_ID")
-        .context("TELEGRAM_CHAT_ID environment variable not set")?;
-    let chat_id = ChatId(chat_id_str.parse::<i64>()
-        .with_context(|| format!("Failed to parse TELEGRAM_CHAT_ID '{}' as integer", chat_id_str))?);
-    log::info!("Bot initialized. Target chat ID: {}", chat_id_str);
-
-    Ok(Config { bot, chat_id })
+    Ok(())
 }
 
 // Fetch the webpage (or read from file) and parse out the current camera locations
@@ -138,9 +218,10 @@ async fn fetch_and_parse_cameras(offline_mode: bool) -> Result<HashSet<String>> 
     Ok(current_cameras)
 }
 
-// Compare current cameras with known ones and send Telegram notification if new ones are found
-async fn compare_and_notify(
-    config: &Config, // Use Config struct
+// Compare current cameras with known ones and send Telegram notification to all subscribers
+async fn compare_and_notify( // Keep this function for later use in the scheduled task
+    bot: Bot,
+    state: Arc<AppState>,
     current_cameras: &HashSet<String>,
     known_cameras: &HashSet<String>,
 ) -> Result<()> {
@@ -163,15 +244,44 @@ async fn compare_and_notify(
             message_text.push_str(&format!("- {}\n", camera));
         }
 
-        match config.bot.send_message(config.chat_id, &message_text).await { // Use config fields
-            Ok(_) => log::info!("Successfully sent notification to chat ID {}", config.chat_id),
-            Err(e) => {
-                // Log error but continue execution (e.g., still update state file)
-                log::error!("Failed to send Telegram message: {}", e);
-                // Optionally, return the error if notification failure is critical:
-                // return Err(anyhow!(e).context("Failed to send Telegram message"));
-            }
+        // Get subscriber list (read lock)
+        let subscribers = state.subscribers.read().await;
+        if subscribers.is_empty() {
+            log::warn!("New cameras detected but no subscribers to notify.");
+            return Ok(());
         }
+
+        log::info!("Sending notification to {} subscribers...", subscribers.len());
+        let mut send_futures = Vec::new();
+
+        for chat_id_val in subscribers.iter() {
+             let chat_id = ChatId(*chat_id_val);
+             // Clone bot and message for each concurrent send task
+             let bot_clone = bot.clone();
+             let message_clone = message_text.clone();
+             // Spawn a task for each message send
+             send_futures.push(tokio::spawn(async move {
+                 match bot_clone.send_message(chat_id, message_clone).await {
+                     Ok(_) => {
+                         log::debug!("Successfully sent notification to chat ID {}", chat_id.0);
+                         Ok(()) // Indicate success for this specific send
+                     }
+                     Err(e) => {
+                         log::error!("Failed to send Telegram message to {}: {}", chat_id.0, e);
+                         Err(e) // Propagate the error for this specific send
+                     }
+                 }
+             }));
+        }
+
+        // Wait for all send tasks to complete and log aggregate results
+        let results = future::join_all(send_futures).await; // Use imported future module
+        let success_count = results.iter().filter(|res| res.is_ok() && res.as_ref().unwrap().is_ok()).count();
+        let error_count = results.len() - success_count;
+
+        log::info!("Finished sending notifications. Success: {}, Errors: {}", success_count, error_count);
+        // Decide if overall function should return an error if *any* send failed.
+        // For now, just log errors and return Ok(()) overall.
     }
     Ok(())
 }
@@ -192,27 +302,54 @@ fn update_state_file(
 }
 
 
+// Command handler logic - routes commands to specific functions
+async fn handle_commands(bot: Bot, msg: Message, cmd: Command, state: Arc<AppState>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match cmd {
+        Command::Start => start_command(bot, msg, state).await?,
+        // Add matches for other commands here later
+    };
+    Ok(())
+}
+
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // Initialize logging
+    init_logging()?; // No longer async
 
-    let config = init_logging_and_config().await?;
+    // Parse command-line arguments (e.g., for --offline mode, though not used in dispatcher yet)
+    let _cli = Cli::parse(); // Keep parsing but maybe use it later
 
-    let known_cameras = load_known_cameras(STATE_FILE_PATH)?;
-    log::info!("Loaded {} known cameras from {}", known_cameras.len(), STATE_FILE_PATH);
+    // Initialize the bot directly here
+    let bot = Bot::from_env();
+    log::info!("Bot instance created.");
 
-    let current_cameras = fetch_and_parse_cameras(cli.offline).await?;
+    // Load initial subscribers
+    let initial_subscribers = load_subscribers(SUBSCRIBERS_FILE_PATH)?;
+    log::info!("Loaded {} initial subscribers from {}", initial_subscribers.len(), SUBSCRIBERS_FILE_PATH);
 
-    // Exit early if no cameras were found on the page (logged in fetch_and_parse_cameras)
-    if current_cameras.is_empty() {
-         log::warn!("No current cameras found. Exiting.");
-         return Ok(());
-    }
+    // Create the shared state
+    let app_state = Arc::new(AppState {
+        subscribers: RwLock::new(initial_subscribers),
+    });
 
-    compare_and_notify(&config, &current_cameras, &known_cameras).await?; // Pass config
+    // Build the handler chain directly
+    let handler = Update::filter_message()
+        .branch(
+            dptree::entry()
+                .filter_command::<Command>()
+                .endpoint(handle_commands)
+        );
 
-    update_state_file(&current_cameras, &known_cameras)?;
+    // Build the dispatcher
+    log::info!("Starting dispatcher...");
+    Dispatcher::builder(bot, handler) // Pass the handler directly
+        .dependencies(dptree::deps![app_state]) // Correct deps macro usage
+        .enable_ctrlc_handler() // Graceful shutdown on Ctrl+C
+        .build()
+        .dispatch()
+        .await;
 
-    log::info!("Finished execution successfully.");
+    log::info!("Dispatcher finished."); // Should only happen on shutdown
     Ok(())
 }
