@@ -13,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (Application, ApplicationBuilder, CommandHandler, ContextTypes)
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -279,20 +279,21 @@ def bot_start():
     app.add_handler(CommandHandler("show_map",
                                    cmd_show_map))
 
-    trigger = CronTrigger(
-        year="*", month="*", day="*", hour="*", minute="0", second="0"
-    )
+    async def post_init(application: Application):
+        trigger = CronTrigger(
+            year="*", month="*", day="*", hour="*", minute="0", second="0"
+        )
 
-    scheduler = AsyncIOScheduler()
-    scheduler.start()
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(
+            check_for_updates,
+            trigger=trigger,
+            args=[application],
+            name="get_velox_list",
+        )
+        scheduler.start()
 
-    scheduler.add_job(
-        check_for_updates,
-        trigger=trigger,
-        args=[app],
-        name="get_velox_list",
-    )
-
+    app.post_init = post_init
     app.run_polling()
 
 
