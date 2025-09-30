@@ -24,6 +24,10 @@ const CHECK_INTERVAL_MINUTES: u64 = 30;
 const DOWNTIME_START_HOUR: u8 = 2;
 const DOWNTIME_END_HOUR: u8 = 7;
 
+// Retry configuration for network operations
+const MAX_RETRY_ATTEMPTS: u32 = 3;
+const RETRY_DELAY_SECONDS: u64 = 5;
+
 // Define the commands the bot understands
 #[derive(BotCommands, Clone, Debug)]
 #[command(
@@ -230,7 +234,7 @@ async fn help_command(
 async fn manual_update_command(
     bot: Bot,
     msg: Message,
-    state: Arc<AppState>,
+    _state: Arc<AppState>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let chat_id = msg.chat.id.0;
     log::info!("Received /manual_update command from chat ID: {chat_id}");
@@ -257,13 +261,11 @@ async fn manual_update_command(
                 current_cameras.len()
             );
 
-            // Compare and notify if there are new cameras
-            if let Err(e) =
-                compare_and_notify(bot.clone(), state.clone(), &current_cameras, &known_cameras)
-                    .await
-            {
-                log::error!("Failed to compare and notify during manual update: {e}");
-            }
+            // For manual updates, we only check for new cameras but don't send automatic notifications
+            let new_cameras: Vec<String> = current_cameras
+                .difference(&known_cameras)
+                .cloned()
+                .collect();
 
             // Update state file with current cameras
             if let Err(e) = update_state_file(&current_cameras, &known_cameras) {
@@ -271,14 +273,18 @@ async fn manual_update_command(
             }
 
             // Send summary to the user who requested the update
-            let new_count = current_cameras.difference(&known_cameras).count();
+            let new_count = new_cameras.len();
             let total_count = current_cameras.len();
 
             let summary = if new_count > 0 {
-                format!(
-                    "✅ Manual check complete!\n📊 Found {} new cameras out of {} total",
+                let mut message = format!(
+                    "✅ Manual check complete!\n� Found {} new cameras out of {} total:\n",
                     new_count, total_count
-                )
+                );
+                for camera in &new_cameras {
+                    message.push_str(&format!("- {}\n", camera));
+                }
+                message
             } else {
                 format!(
                     "✅ Manual check complete!\n📊 No new cameras found ({} total cameras)",
@@ -479,6 +485,73 @@ fn save_subscribers(path: &str, subscribers: &HashMap<i64, SubscriberData>) -> R
     fs::write(path, content).with_context(|| format!("Failed to write subscriber file {path}"))
 }
 
+// Send message with retry logic for network failures
+async fn send_message_with_retry(
+    bot: &Bot,
+    chat_id: teloxide::types::ChatId,
+    text: String,
+) -> Result<()> {
+    send_message_with_retry_and_parse_mode(bot, chat_id, text, None).await
+}
+
+// Send message with retry logic and optional parse mode
+async fn send_message_with_retry_and_parse_mode(
+    bot: &Bot,
+    chat_id: teloxide::types::ChatId,
+    text: String,
+    parse_mode: Option<teloxide::types::ParseMode>,
+) -> Result<()> {
+    use teloxide::requests::Requester;
+
+    let mut last_error = None;
+
+    for attempt in 1..=MAX_RETRY_ATTEMPTS {
+        let mut request = bot.send_message(chat_id, text.clone());
+        if let Some(mode) = parse_mode {
+            request = request.parse_mode(mode);
+        }
+
+        match request.await {
+            Ok(_) => {
+                if attempt > 1 {
+                    log::info!(
+                        "Successfully sent message to {} after {} attempts",
+                        chat_id,
+                        attempt
+                    );
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                last_error = Some(anyhow::anyhow!("Telegram API error: {}", e));
+                log::warn!(
+                    "Attempt {}/{} to send message to {} failed: {}",
+                    attempt,
+                    MAX_RETRY_ATTEMPTS,
+                    chat_id,
+                    e
+                );
+
+                if attempt < MAX_RETRY_ATTEMPTS {
+                    log::info!(
+                        "Retrying message send in {} seconds...",
+                        RETRY_DELAY_SECONDS
+                    );
+                    tokio::time::sleep(Duration::from_secs(RETRY_DELAY_SECONDS)).await;
+                } else {
+                    log::error!(
+                        "All {} attempts to send message to {} failed",
+                        MAX_RETRY_ATTEMPTS,
+                        chat_id
+                    );
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap())
+}
+
 // Save known cameras to JSON file
 fn save_known_cameras(path: &str, cameras: &HashSet<String>) -> Result<()> {
     let mut sorted_cameras: Vec<String> = cameras.iter().cloned().collect();
@@ -491,17 +564,57 @@ fn save_known_cameras(path: &str, cameras: &HashSet<String>) -> Result<()> {
 
 // Fetch the webpage and parse out the current camera locations
 async fn fetch_and_parse_cameras() -> Result<HashSet<String>> {
-    log::info!("Fetching URL: {}", CAMERA_LIST_URL);
+    fetch_and_parse_cameras_with_retry().await
+}
+
+// Fetch cameras with retry logic for network failures
+async fn fetch_and_parse_cameras_with_retry() -> Result<HashSet<String>> {
+    let mut last_error = None;
+
+    for attempt in 1..=MAX_RETRY_ATTEMPTS {
+        log::info!(
+            "Fetching URL (attempt {}/{}): {}",
+            attempt,
+            MAX_RETRY_ATTEMPTS,
+            CAMERA_LIST_URL
+        );
+
+        match fetch_cameras_once().await {
+            Ok(cameras) => {
+                if attempt > 1 {
+                    log::info!("Successfully recovered after {} attempts", attempt);
+                }
+                return Ok(cameras);
+            }
+            Err(e) => {
+                last_error = Some(e);
+                log::warn!(
+                    "Attempt {}/{} failed: {}",
+                    attempt,
+                    MAX_RETRY_ATTEMPTS,
+                    last_error.as_ref().unwrap()
+                );
+
+                if attempt < MAX_RETRY_ATTEMPTS {
+                    log::info!("Retrying in {} seconds...", RETRY_DELAY_SECONDS);
+                    tokio::time::sleep(Duration::from_secs(RETRY_DELAY_SECONDS)).await;
+                } else {
+                    log::error!("All {} attempts failed", MAX_RETRY_ATTEMPTS);
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap())
+}
+
+// Single attempt to fetch and parse cameras
+async fn fetch_cameras_once() -> Result<HashSet<String>> {
     let response = reqwest::get(CAMERA_LIST_URL)
         .await
         .with_context(|| format!("Failed to send GET request to {}", CAMERA_LIST_URL))?;
 
     if !response.status().is_success() {
-        log::error!(
-            "Failed to fetch URL {}: Status {}",
-            CAMERA_LIST_URL,
-            response.status()
-        );
         anyhow::bail!("HTTP request failed with status: {}", response.status());
     }
 
@@ -509,7 +622,7 @@ async fn fetch_and_parse_cameras() -> Result<HashSet<String>> {
         .text()
         .await
         .with_context(|| format!("Failed to read response body from {}", CAMERA_LIST_URL))?;
-    log::info!("Successfully fetched HTML content online.");
+    log::debug!("Successfully fetched HTML content online.");
 
     let document = Html::parse_document(&body);
     let selector = Selector::parse(CAMERA_SELECTOR).map_err(|e| {
@@ -520,7 +633,7 @@ async fn fetch_and_parse_cameras() -> Result<HashSet<String>> {
         )
     })?;
 
-    log::info!(
+    log::debug!(
         "Extracting current camera locations using selector '{}'...",
         CAMERA_SELECTOR
     );
@@ -593,10 +706,13 @@ async fn compare_and_notify(
 
                 for chat_id_val in no_update_subscribers {
                     let chat_id = ChatId(chat_id_val);
-                    match bot
-                        .send_message(chat_id, no_update_message)
-                        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                        .await
+                    match send_message_with_retry_and_parse_mode(
+                        &bot,
+                        chat_id,
+                        no_update_message.to_string(),
+                        Some(teloxide::types::ParseMode::MarkdownV2),
+                    )
+                    .await
                     {
                         Ok(_) => {
                             log::debug!(
@@ -606,7 +722,7 @@ async fn compare_and_notify(
                         }
                         Err(e) => {
                             log::error!(
-                                "Failed to send 'no updates' message to {}: {}",
+                                "Failed to send 'no updates' message to {} after retries: {}",
                                 chat_id.0,
                                 e
                             );
@@ -640,13 +756,17 @@ async fn compare_and_notify(
 
         for (chat_id_val, _) in subscribers.iter() {
             let chat_id = ChatId(*chat_id_val);
-            match bot.send_message(chat_id, message_text.clone()).await {
+            match send_message_with_retry(&bot, chat_id, message_text.clone()).await {
                 Ok(_) => {
                     log::debug!("Successfully sent notification to chat ID {}", chat_id.0);
                     success_count += 1;
                 }
                 Err(e) => {
-                    log::error!("Failed to send Telegram message to {}: {}", chat_id.0, e);
+                    log::error!(
+                        "Failed to send Telegram message to {} after retries: {}",
+                        chat_id.0,
+                        e
+                    );
                     error_count += 1;
                 }
             }
@@ -690,6 +810,13 @@ fn is_downtime() -> bool {
 // Background task to periodically check for camera updates
 async fn camera_monitoring_task(bot: Bot, state: Arc<AppState>) {
     let mut interval = interval(Duration::from_secs(CHECK_INTERVAL_MINUTES * 60));
+
+    // Skip the first tick to avoid duplicate check immediately after startup
+    log::info!(
+        "Camera monitoring task started. Next check in {} minutes.",
+        CHECK_INTERVAL_MINUTES
+    );
+    interval.tick().await;
 
     loop {
         interval.tick().await;
