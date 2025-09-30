@@ -4,8 +4,9 @@ use log;
 use pretty_env_logger;
 use reqwest;
 use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
 use serde_json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -42,6 +43,8 @@ enum Command {
     ManualUpdate,
     #[command(description = "Show bot status and last check information.")]
     Status,
+    #[command(description = "Toggle notifications for checks with no updates.")]
+    NotifyNoUpdates,
 }
 
 // Command handler for /start
@@ -54,7 +57,9 @@ async fn start_command(
     log::info!("Received /start command from chat ID: {chat_id}");
 
     let mut subscribers = state.subscribers.write().await;
-    let newly_added = subscribers.insert(chat_id);
+    let newly_added = subscribers
+        .insert(chat_id, SubscriberData::default())
+        .is_none();
 
     if newly_added {
         log::info!("New subscriber added: {chat_id}");
@@ -154,7 +159,7 @@ async fn unsubscribe_command(
     log::info!("Received /unsubscribe command from chat ID: {chat_id}");
 
     let mut subscribers = state.subscribers.write().await;
-    let was_subscribed = subscribers.remove(&chat_id);
+    let was_subscribed = subscribers.remove(&chat_id).is_some();
 
     if was_subscribed {
         log::info!("User {chat_id} unsubscribed successfully");
@@ -201,6 +206,7 @@ async fn help_command(
         /unsubscribe \\- Stop receiving notifications\n\
         /current\\_list \\- Show all known cameras\n\
         /manual\\_update \\- Force immediate check\n\
+        /notify\\_no\\_updates \\- Toggle no\\-update notifications\n\
         /status \\- Show bot status\n\
         /help \\- Show this help message\n\n\
         *Features:*\n\
@@ -349,9 +355,68 @@ async fn status_command(
     Ok(())
 }
 
+// Command handler for /notify_no_updates
+async fn notify_no_updates_command(
+    bot: Bot,
+    msg: Message,
+    state: Arc<AppState>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let chat_id = msg.chat.id.0;
+    log::info!("Received /notify_no_updates command from chat ID: {chat_id}");
+
+    // Get current preference
+    let mut subscribers = state.subscribers.write().await;
+    let current_prefs = subscribers
+        .entry(chat_id)
+        .or_insert_with(SubscriberData::default);
+
+    // Toggle the preference
+    current_prefs.notify_no_updates = !current_prefs.notify_no_updates;
+    let new_setting = current_prefs.notify_no_updates;
+
+    // Save preferences to file
+    let subscribers_copy = subscribers.clone();
+    drop(subscribers);
+
+    match save_subscribers(SUBSCRIBERS_FILE_PATH, &subscribers_copy) {
+        Ok(_) => log::info!("Successfully saved subscriber preferences after toggle"),
+        Err(e) => {
+            log::error!("Failed to save user preferences: {e}");
+        }
+    }
+
+    // Send confirmation message
+    let message = if new_setting {
+        "✅ You will now receive notifications when camera checks find no updates\\."
+    } else {
+        "❌ You will no longer receive notifications when camera checks find no updates\\."
+    };
+
+    bot.send_message(msg.chat.id, message)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .await?;
+
+    log::info!("User {chat_id} toggled notify_no_updates to: {new_setting}");
+    Ok(())
+}
+
+// Subscriber data with preferences
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct SubscriberData {
+    notify_no_updates: bool,
+}
+
+impl Default for SubscriberData {
+    fn default() -> Self {
+        Self {
+            notify_no_updates: false, // Default to not sending "no updates" notifications
+        }
+    }
+}
+
 // Shared application state
 struct AppState {
-    subscribers: RwLock<HashSet<i64>>,
+    subscribers: RwLock<HashMap<i64, SubscriberData>>,
 }
 
 // Load known cameras from JSON file
@@ -372,30 +437,45 @@ fn load_known_cameras(path: &str) -> Result<HashSet<String>> {
     }
 }
 
-// Load subscribed chat IDs from JSON file
-fn load_subscribers(path: &str) -> Result<HashSet<i64>> {
+// Load subscribed chat IDs and preferences from JSON file
+fn load_subscribers(path: &str) -> Result<HashMap<i64, SubscriberData>> {
     match fs::read_to_string(path) {
         Ok(content) => {
             if content.is_empty() {
-                Ok(HashSet::new())
+                Ok(HashMap::new())
             } else {
-                serde_json::from_str(&content)
-                    .with_context(|| format!("Failed to parse subscriber JSON from {path}"))
+                // Try to parse as new format first
+                if let Ok(subscribers) =
+                    serde_json::from_str::<HashMap<i64, SubscriberData>>(&content)
+                {
+                    return Ok(subscribers);
+                }
+
+                // Fall back to old format (array of IDs) and migrate
+                let old_subscribers: Vec<i64> = serde_json::from_str(&content)
+                    .with_context(|| format!("Failed to parse subscriber JSON from {path}"))?;
+
+                log::info!(
+                    "Migrating {} subscribers from old format to new format",
+                    old_subscribers.len()
+                );
+                let mut new_subscribers = HashMap::new();
+                for chat_id in old_subscribers {
+                    new_subscribers.insert(chat_id, SubscriberData::default());
+                }
+                Ok(new_subscribers)
             }
         }
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(HashSet::new()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(HashMap::new()),
         Err(e) => Err(anyhow::Error::from(e))
             .with_context(|| format!("Failed to read subscriber file {path}")),
     }
 }
 
-// Save subscribed chat IDs to JSON file
-fn save_subscribers(path: &str, subscribers: &HashSet<i64>) -> Result<()> {
-    let mut sorted_subscribers: Vec<i64> = subscribers.iter().cloned().collect();
-    sorted_subscribers.sort_unstable();
-
-    let content = serde_json::to_string_pretty(&sorted_subscribers)
-        .with_context(|| "Failed to serialize subscriber list to JSON")?;
+// Save subscribed chat IDs and preferences to JSON file
+fn save_subscribers(path: &str, subscribers: &HashMap<i64, SubscriberData>) -> Result<()> {
+    let content = serde_json::to_string_pretty(subscribers)
+        .with_context(|| "Failed to serialize subscriber data to JSON")?;
     fs::write(path, content).with_context(|| format!("Failed to write subscriber file {path}"))
 }
 
@@ -491,6 +571,50 @@ async fn compare_and_notify(
 
     if new_cameras.is_empty() {
         log::info!("No new cameras detected.");
+
+        // Send "no updates" notifications to users who have opted in
+        let subscribers = state.subscribers.read().await;
+
+        if !subscribers.is_empty() {
+            let mut no_update_subscribers = Vec::new();
+            for (chat_id, subscriber_data) in subscribers.iter() {
+                if subscriber_data.notify_no_updates {
+                    no_update_subscribers.push(*chat_id);
+                }
+            }
+
+            if !no_update_subscribers.is_empty() {
+                log::info!(
+                    "Sending 'no updates' notification to {} subscribers",
+                    no_update_subscribers.len()
+                );
+                let no_update_message =
+                    "ℹ️ Camera check completed: No new speed cameras detected\\.";
+
+                for chat_id_val in no_update_subscribers {
+                    let chat_id = ChatId(chat_id_val);
+                    match bot
+                        .send_message(chat_id, no_update_message)
+                        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                        .await
+                    {
+                        Ok(_) => {
+                            log::debug!(
+                                "Successfully sent 'no updates' notification to chat ID {}",
+                                chat_id.0
+                            );
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to send 'no updates' message to {}: {}",
+                                chat_id.0,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
     } else {
         log::info!("New cameras detected:");
         new_cameras.sort_unstable();
@@ -514,7 +638,7 @@ async fn compare_and_notify(
         let mut success_count = 0;
         let mut error_count = 0;
 
-        for chat_id_val in subscribers.iter() {
+        for (chat_id_val, _) in subscribers.iter() {
             let chat_id = ChatId(*chat_id_val);
             match bot.send_message(chat_id, message_text.clone()).await {
                 Ok(_) => {
@@ -667,6 +791,10 @@ async fn handle_commands(
         Command::Status => {
             log::debug!("Routing to status_command");
             status_command(bot, msg, state).await
+        }
+        Command::NotifyNoUpdates => {
+            log::debug!("Routing to notify_no_updates_command");
+            notify_no_updates_command(bot, msg, state).await
         }
     }
 }
