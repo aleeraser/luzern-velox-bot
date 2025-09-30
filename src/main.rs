@@ -239,7 +239,7 @@ async fn manual_update_command(
     let chat_id = msg.chat.id.0;
     log::info!("Received /manual_update command from chat ID: {chat_id}");
 
-    bot.send_message(msg.chat.id, "🔄 Starting manual camera check...")
+    bot.send_message(msg.chat.id, "Starting manual camera check...")
         .await?;
 
     // Load current known cameras
@@ -287,7 +287,7 @@ async fn manual_update_command(
                 message
             } else {
                 format!(
-                    "✅ Manual check complete!\n📊 No new cameras found ({} total cameras)",
+                    "✅ Manual check complete!\nNo new cameras found ({} total cameras)",
                     total_count
                 )
             };
@@ -341,9 +341,9 @@ async fn status_command(
         • Active subscribers: {}\n\
         • Check interval: {} minutes\n\
         • Downtime: {}:00\\-{}:00\n\n\
-        🔄 *Current Status:*\n\
+        *Current Status:*\n\
         {}\n\n\
-        📡 *Data Source:*\n\
+        *Data Source:*\n\
         [Luzern Police Official Website]({})",
         camera_count,
         subscriber_count,
