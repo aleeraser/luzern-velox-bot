@@ -34,6 +34,14 @@ enum Command {
     Start,
     #[command(description = "Show the current list of known speed cameras.")]
     CurrentList,
+    #[command(description = "Unsubscribe from speed camera notifications.")]
+    Unsubscribe,
+    #[command(description = "Show help message with available commands.")]
+    Help,
+    #[command(description = "Force an immediate camera check.")]
+    ManualUpdate,
+    #[command(description = "Show bot status and last check information.")]
+    Status,
 }
 
 // Command handler for /start
@@ -132,6 +140,211 @@ async fn current_list_command(
             return Err(e.into());
         }
     }
+
+    Ok(())
+}
+
+// Command handler for /unsubscribe
+async fn unsubscribe_command(
+    bot: Bot,
+    msg: Message,
+    state: Arc<AppState>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let chat_id = msg.chat.id.0;
+    log::info!("Received /unsubscribe command from chat ID: {chat_id}");
+
+    let mut subscribers = state.subscribers.write().await;
+    let was_subscribed = subscribers.remove(&chat_id);
+
+    if was_subscribed {
+        log::info!("User {chat_id} unsubscribed successfully");
+        drop(subscribers);
+
+        let subscribers_data = {
+            let guard = state.subscribers.read().await;
+            guard.clone()
+        };
+
+        match save_subscribers(SUBSCRIBERS_FILE_PATH, &subscribers_data) {
+            Ok(_) => log::info!("Successfully saved updated subscriber list after unsubscribe"),
+            Err(e) => {
+                log::error!("Failed to save subscriber list after unsubscribe: {e}");
+            }
+        }
+
+        bot.send_message(
+            msg.chat.id,
+            "You have been unsubscribed from speed camera notifications.",
+        )
+        .await?;
+    } else {
+        log::info!("User {chat_id} was not subscribed");
+        bot.send_message(msg.chat.id, "You are not currently subscribed.")
+            .await?;
+    }
+
+    Ok(())
+}
+
+// Command handler for /help
+async fn help_command(
+    bot: Bot,
+    msg: Message,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    log::info!("Received /help command from chat ID: {}", msg.chat.id.0);
+
+    let help_text = format!(
+        "🚗 *Luzern Speed Camera Bot* 🚗\n\n\
+        This bot monitors speed cameras in Luzern, Switzerland and notifies you when new ones are detected\\.\n\n\
+        *Available Commands:*\n\
+        /start \\- Subscribe to notifications\n\
+        /unsubscribe \\- Stop receiving notifications\n\
+        /current\\_list \\- Show all known cameras\n\
+        /manual\\_update \\- Force immediate check\n\
+        /status \\- Show bot status\n\
+        /help \\- Show this help message\n\n\
+        *Features:*\n\
+        • Automatic checks every {} minutes\n\
+        • No automatic checks between {}:00\\-{}:00\n\
+        • Data sourced from Luzern Police website\n\n\
+        Questions? Contact @aleeraser",
+        CHECK_INTERVAL_MINUTES,
+        DOWNTIME_START_HOUR,
+        DOWNTIME_END_HOUR
+    );
+
+    bot.send_message(msg.chat.id, help_text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .await?;
+
+    Ok(())
+}
+
+// Command handler for /manual_update
+async fn manual_update_command(
+    bot: Bot,
+    msg: Message,
+    state: Arc<AppState>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let chat_id = msg.chat.id.0;
+    log::info!("Received /manual_update command from chat ID: {chat_id}");
+
+    bot.send_message(msg.chat.id, "🔄 Starting manual camera check...")
+        .await?;
+
+    // Load current known cameras
+    let known_cameras = match load_known_cameras(STATE_FILE_PATH) {
+        Ok(cameras) => cameras,
+        Err(e) => {
+            log::error!("Failed to load known cameras during manual update: {e}");
+            bot.send_message(msg.chat.id, "❌ Failed to load current camera data.")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    // Fetch current cameras from website
+    match fetch_and_parse_cameras().await {
+        Ok(current_cameras) => {
+            log::info!(
+                "Manual update: fetched {} cameras from website",
+                current_cameras.len()
+            );
+
+            // Compare and notify if there are new cameras
+            if let Err(e) =
+                compare_and_notify(bot.clone(), state.clone(), &current_cameras, &known_cameras)
+                    .await
+            {
+                log::error!("Failed to compare and notify during manual update: {e}");
+            }
+
+            // Update state file with current cameras
+            if let Err(e) = update_state_file(&current_cameras, &known_cameras) {
+                log::error!("Failed to update state file during manual update: {e}");
+            }
+
+            // Send summary to the user who requested the update
+            let new_count = current_cameras.difference(&known_cameras).count();
+            let total_count = current_cameras.len();
+
+            let summary = if new_count > 0 {
+                format!(
+                    "✅ Manual check complete!\n📊 Found {} new cameras out of {} total",
+                    new_count, total_count
+                )
+            } else {
+                format!(
+                    "✅ Manual check complete!\n📊 No new cameras found ({} total cameras)",
+                    total_count
+                )
+            };
+
+            bot.send_message(msg.chat.id, summary).await?;
+        }
+        Err(e) => {
+            log::error!("Failed to fetch cameras during manual update: {e}");
+            bot.send_message(
+                msg.chat.id,
+                "❌ Failed to fetch camera data from website. Please try again later.",
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+// Command handler for /status
+async fn status_command(
+    bot: Bot,
+    msg: Message,
+    state: Arc<AppState>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    log::info!("Received /status command from chat ID: {}", msg.chat.id.0);
+
+    // Get subscriber count
+    let subscriber_count = {
+        let subscribers = state.subscribers.read().await;
+        subscribers.len()
+    };
+
+    // Get known camera count
+    let camera_count = match load_known_cameras(STATE_FILE_PATH) {
+        Ok(cameras) => cameras.len(),
+        Err(_) => 0,
+    };
+
+    // Check if we're in downtime
+    let downtime_status = if is_downtime() {
+        "🌙 In downtime \\(checks paused\\)"
+    } else {
+        "🔄 Active monitoring"
+    };
+
+    let status_text = format!(
+        "🤖 *Bot Status*\n\n\
+        📊 *Statistics:*\n\
+        • Known cameras: {}\n\
+        • Active subscribers: {}\n\
+        • Check interval: {} minutes\n\
+        • Downtime: {}:00\\-{}:00\n\n\
+        🔄 *Current Status:*\n\
+        {}\n\n\
+        📡 *Data Source:*\n\
+        [Luzern Police Official Website]({})",
+        camera_count,
+        subscriber_count,
+        CHECK_INTERVAL_MINUTES,
+        DOWNTIME_START_HOUR,
+        DOWNTIME_END_HOUR,
+        downtime_status,
+        CAMERA_LIST_URL
+    );
+
+    bot.send_message(msg.chat.id, status_text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .await?;
 
     Ok(())
 }
@@ -438,6 +651,22 @@ async fn handle_commands(
         Command::CurrentList => {
             log::debug!("Routing to current_list_command");
             current_list_command(bot, msg).await
+        }
+        Command::Unsubscribe => {
+            log::debug!("Routing to unsubscribe_command");
+            unsubscribe_command(bot, msg, state).await
+        }
+        Command::Help => {
+            log::debug!("Routing to help_command");
+            help_command(bot, msg).await
+        }
+        Command::ManualUpdate => {
+            log::debug!("Routing to manual_update_command");
+            manual_update_command(bot, msg, state).await
+        }
+        Command::Status => {
+            log::debug!("Routing to status_command");
+            status_command(bot, msg, state).await
         }
     }
 }
