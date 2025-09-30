@@ -9,14 +9,19 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::sync::Arc;
+use std::time::Duration;
 use teloxide::error_handlers::LoggingErrorHandler;
 use teloxide::{dptree, prelude::*, types::Message, utils::command::BotCommands};
 use tokio::sync::RwLock;
+use tokio::time::interval;
 
 const STATE_FILE_PATH: &str = "known_cameras.json";
 const SUBSCRIBERS_FILE_PATH: &str = "subscribers.json";
 const CAMERA_LIST_URL: &str = "https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen";
 const CAMERA_SELECTOR: &str = "#radarList li > a";
+const CHECK_INTERVAL_MINUTES: u64 = 30;
+const DOWNTIME_START_HOUR: u8 = 2;
+const DOWNTIME_END_HOUR: u8 = 7;
 
 // Define the commands the bot understands
 #[derive(BotCommands, Clone, Debug)]
@@ -337,6 +342,69 @@ fn update_state_file(
     Ok(())
 }
 
+// Check if current time is within downtime hours (2 AM - 7 AM local time)
+fn is_downtime() -> bool {
+    use chrono::prelude::*;
+    let now = Local::now();
+    let hour = now.hour() as u8;
+    hour >= DOWNTIME_START_HOUR && hour < DOWNTIME_END_HOUR
+}
+
+// Background task to periodically check for camera updates
+async fn camera_monitoring_task(bot: Bot, state: Arc<AppState>) {
+    let mut interval = interval(Duration::from_secs(CHECK_INTERVAL_MINUTES * 60));
+
+    loop {
+        interval.tick().await;
+
+        if is_downtime() {
+            log::info!(
+                "Skipping camera check during downtime hours ({}-{} local time)",
+                DOWNTIME_START_HOUR,
+                DOWNTIME_END_HOUR
+            );
+            continue;
+        }
+
+        log::info!("Starting periodic camera check...");
+
+        // Load current known cameras
+        let known_cameras = match load_known_cameras(STATE_FILE_PATH) {
+            Ok(cameras) => cameras,
+            Err(e) => {
+                log::error!("Failed to load known cameras: {e}");
+                continue;
+            }
+        };
+
+        // Fetch current cameras from website
+        match fetch_and_parse_cameras().await {
+            Ok(current_cameras) => {
+                log::info!("Fetched {} cameras from website", current_cameras.len());
+
+                // Compare and notify if there are new cameras
+                if let Err(e) =
+                    compare_and_notify(bot.clone(), state.clone(), &current_cameras, &known_cameras)
+                        .await
+                {
+                    log::error!("Failed to compare and notify: {e}");
+                }
+
+                // Update state file with current cameras
+                if let Err(e) = update_state_file(&current_cameras, &known_cameras) {
+                    log::error!("Failed to update state file: {e}");
+                }
+
+                log::info!("Periodic camera check completed successfully");
+            }
+            Err(e) => {
+                log::error!("Failed to fetch cameras during periodic check: {e}");
+                // Continue to next check rather than crashing
+            }
+        }
+    }
+}
+
 // Initialize logging and load .env
 fn init_logging() -> Result<()> {
     match dotenvy::dotenv() {
@@ -463,6 +531,17 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Start the background camera monitoring task
+    log::info!(
+        "Starting background camera monitoring task (interval: {} minutes)",
+        CHECK_INTERVAL_MINUTES
+    );
+    let monitoring_bot = bot.clone();
+    let monitoring_state = app_state.clone();
+    tokio::spawn(async move {
+        camera_monitoring_task(monitoring_bot, monitoring_state).await;
+    });
+
     // Build the handler chain
     let handler = Update::filter_message()
         .branch(
@@ -484,6 +563,6 @@ async fn main() -> Result<()> {
         .dispatch()
         .await;
 
-    log::info!("Dispatcher finished.");
+    log::info!("Bot shutdown complete.");
     Ok(())
 }

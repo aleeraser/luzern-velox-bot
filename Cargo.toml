@@ -14,3 +14,4 @@ dotenvy = "0.15.7"
 anyhow = "1.0"
 reqwest = "0.12.23"
 scraper = "0.23.1"
+chrono = { version = "0.4", features = ["serde"] }
