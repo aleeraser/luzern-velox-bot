@@ -1,18 +1,16 @@
 [package]
 name = "luzern-velox-vibebot"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-reqwest = "0.12.15" # For making HTTP requests to fetch the website content
-scraper = "0.23.1" # For parsing HTML and extracting data using CSS selectors
-teloxide = { version = "0.14.1", features = ["macros"] } # Telegram bot framework with command macros enabled
-tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread"] } # Asynchronous runtime for Rust
-serde = { version = "1.0", features = ["derive"] } # Framework for serializing and deserializing Rust data structures efficiently and generically
-serde_json = "1.0" # For serializing and deserializing data to/from JSON format (used for state file)
-pretty_env_logger = "0.5" # For setting up logging based on environment variables (RUST_LOG)
-log = "0.4" # Logging facade for Rust applications
-dotenvy = "0.15" # For loading environment variables from a .env file
-anyhow = "1.0" # For flexible error handling with context
-clap = { version = "4.5", features = ["derive"] } # For command-line argument parsing
-futures = "0.3" # Added for future::join_all
+teloxide = { version = "0.17.0", features = ["macros"] }
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+pretty_env_logger = "0.5.0"
+log = "0.4"
+dotenvy = "0.15.7"
+anyhow = "1.0"
+reqwest = "0.12.23"
+scraper = "0.23.1"
