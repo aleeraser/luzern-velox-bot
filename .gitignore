@@ -1,5 +1,6 @@
-/target
-known_cameras.json
+.vscode/
+target/
+
+*.json
 .env
 *.service
-subscribers.json
