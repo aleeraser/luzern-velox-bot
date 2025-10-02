@@ -145,10 +145,13 @@ async fn current_list_command(
         let mut sorted_cameras: Vec<CameraData> = cameras.iter().cloned().collect();
         sorted_cameras.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         format!(
-            "Current known speed cameras:\n{}",
+            "Current known speed cameras:\n\n{}",
             sorted_cameras
                 .iter()
-                .map(|c| format!("- {}", c.name))
+                .map(|c| {
+                    let maps_url = generate_google_maps_view_url(c);
+                    format!("- <a href=\"{}\">{}</a>", maps_url, c.name)
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         )
@@ -158,7 +161,11 @@ async fn current_list_command(
         "Sending response message of length: {}",
         response_text.len()
     );
-    match bot.send_message(msg.chat.id, response_text).await {
+    match bot
+        .send_message(msg.chat.id, response_text)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await
+    {
         Ok(_) => log::info!("Successfully sent camera list response"),
         Err(e) => {
             log::error!("Failed to send response: {e}");
@@ -313,7 +320,7 @@ async fn manual_update_command(
 
                 // Send individual messages with maps for each new camera
                 for camera in &new_cameras {
-                    let camera_message = format!("📍 {}", camera.name);
+                    let camera_message = format_camera_message(camera);
 
                     match send_message(
                         &bot,
@@ -756,6 +763,21 @@ fn generate_map_url_with_coordinates(camera: &CameraData, api_key: &str) -> Stri
     )
 }
 
+// Generate a Google Maps URL for viewing a location
+fn generate_google_maps_view_url(camera: &CameraData) -> String {
+    format!(
+        "https://maps.google.com/?q={},{}",
+        camera.latitude, camera.longitude
+    )
+}
+
+// Format camera message with hyperlink to Google Maps location
+fn format_camera_message(camera: &CameraData) -> String {
+    let maps_url = generate_google_maps_view_url(camera);
+    // Use HTML format for simpler parsing
+    format!("📍 <a href=\"{}\">{}</a>", maps_url, camera.name)
+}
+
 // Download map image from Google Maps Static API using coordinates (with caching)
 async fn download_map_image_with_coordinates(
     camera: &CameraData,
@@ -1144,7 +1166,13 @@ async fn send_message(
         }
         (None, _) | (_, false) => {
             // Send text-only message if no API key is available or user doesn't want maps
-            send_message_with_retry(bot, chat_id, message_text.to_string()).await
+            send_message_with_retry_and_parse_mode(
+                bot,
+                chat_id,
+                message_text.to_string(),
+                Some(teloxide::types::ParseMode::Html),
+            )
+            .await
         }
     }
 }
@@ -1170,9 +1198,10 @@ async fn send_message_with_map_image(
     // Create InputFile from the temp file path
     let input_file = InputFile::file(temp_file.path());
 
-    // Send photo with caption
+    // Send photo with caption and HTML parsing
     bot.send_photo(chat_id, input_file)
         .caption(message_text)
+        .parse_mode(teloxide::types::ParseMode::Html)
         .await
         .with_context(|| "Failed to send photo message")?;
 
@@ -1288,7 +1317,7 @@ async fn compare_and_notify(
             // Send individual messages with maps for each camera
             for camera in &new_cameras {
                 log::info!("Sending notification for camera: {}", camera.name);
-                let camera_message = format!("📍 {}", camera.name);
+                let camera_message = format_camera_message(camera);
 
                 match send_message(
                     &bot,
@@ -1645,6 +1674,53 @@ mod tests {
         assert_eq!(
             filename_parens,
             "Camera_Test_Location-45.9876-6.4321-15-800x600.png"
+        );
+    }
+
+    #[test]
+    fn test_camera_message_formatting() {
+        let camera = CameraData {
+            name: "Luzern Bahnhofstrasse".to_string(),
+            latitude: 47.0502,
+            longitude: 8.3093,
+        };
+
+        let message = format_camera_message(&camera);
+        assert_eq!(
+            message,
+            "📍 <a href=\"https://maps.google.com/?q=47.0502,8.3093\">Luzern Bahnhofstrasse</a>"
+        );
+
+        let url = generate_google_maps_view_url(&camera);
+        assert_eq!(url, "https://maps.google.com/?q=47.0502,8.3093");
+    }
+
+    #[test]
+    fn test_current_list_formatting() {
+        let camera1 = CameraData {
+            name: "Camera A".to_string(),
+            latitude: 47.0502,
+            longitude: 8.3093,
+        };
+        let camera2 = CameraData {
+            name: "Camera B".to_string(),
+            latitude: 46.1234,
+            longitude: 7.5678,
+        };
+
+        // Test individual camera list item formatting
+        let maps_url1 = generate_google_maps_view_url(&camera1);
+        let list_item1 = format!("- <a href=\"{}\">{}</a>", maps_url1, camera1.name);
+        assert_eq!(
+            list_item1,
+            "- <a href=\"https://maps.google.com/?q=47.0502,8.3093\">Camera A</a>"
+        );
+
+        let maps_url2 = generate_google_maps_view_url(&camera2);
+        let list_item2 = format!("- <a href=\"{}\">{}</a>", maps_url2, camera2.name);
+        assert_eq!(
+            list_item2,
+            "- <a href=\"https://maps.google.com/?q=46.1234,7.5678\">Camera B</a>"
         );
     }
 }
