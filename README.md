@@ -11,9 +11,11 @@ The bot is written entirely in Rust for performance and reliability.
 ## Features
 
 * **Real-time Notifications:** Get alerted when new speed cameras are activated in Luzern.
-* **Interactive Map Images:** Receive map overviews showing the location of new speed cameras (when Google Maps API key is configured).
+* **Interactive Map Images:** Receive map overviews showing the precise location of new speed cameras (when Google Maps API key is configured).
+* **User-Configurable Maps:** Control whether you receive map images or text-only notifications with the `/toggle_maps` command.
 * **User Subscription Management:** Subscribe and unsubscribe from notifications with simple commands.
 * **Customizable Notifications:** Toggle "no updates" notifications when checks find no changes.
+* **Precise Coordinates:** Extracts exact latitude/longitude from camera source data for accurate map positioning.
 * **Data Source:** Fetches data directly from the official [Luzern Police website](https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen).
 * **Regular Checks:** Polls for updates every 30 minutes during operational hours.
 * **Scheduled Downtime:** The bot pauses checks between 2:00 AM and 7:00 AM (local time) to conserve resources.
@@ -26,42 +28,46 @@ The bot is written entirely in Rust for performance and reliability.
 
 The bot periodically scrapes the specified Luzern Police webpage. It compares the currently listed speed cameras with the previously known list. If new entries are found, it formats a message and sends it via the Telegram Bot API to all subscribed users.
 
-When new speed cameras are detected, the bot sends individual notifications for each newly added camera. If a Google Maps API key is configured, each notification includes a static map image (400x300px) showing the camera location with a red marker. The bot gracefully falls back to text-only notifications if no API key is provided or if map generation fails.
+When new speed cameras are detected, the bot sends individual notifications for each newly added camera. If a Google Maps API key is configured and the user has maps enabled, each notification includes a static map image (400x300px) showing the camera location with a red marker, centered precisely on the camera coordinates. The bot gracefully falls back to text-only notifications if no API key is provided, if map generation fails, or if the user has disabled maps via `/toggle_maps`.
 
-Users can subscribe and unsubscribe using simple commands, and customize their notification preferences (such as receiving notifications when no changes are detected). The bot maintains persistent storage of subscriber data and preferences in JSON files.
+Users can subscribe and unsubscribe using simple commands, and customize their notification preferences (such as receiving notifications when no changes are detected, or toggling map images on/off). The bot maintains persistent storage of subscriber data and preferences in JSON files.
 
 ## Map Integration Details
 
 The bot includes optional Google Maps integration that enhances notifications with location visualizations:
 
-* **Map Images**: Static map images (400x300px) with red markers showing camera locations
+* **Precise Positioning**: Extracts exact latitude/longitude coordinates from camera source URLs for accurate map positioning
+* **Camera-Centered Maps**: Static map images (400x300px) centered on the exact camera location with red markers
+* **User Control**: Individual users can toggle maps on/off with `/toggle_maps` command (enabled by default)
 * **Smart Usage**: Maps are only sent for newly added cameras, not removed ones
 * **Cost-Effective**: Typical usage (2-3 detections/day) stays within Google's free tier (10,000 requests/month)
 * **Fallback**: Works perfectly without API key - sends text-only notifications
-* **Supported Commands**: Both automatic notifications and `/manual_update` include maps when available
+* **Supported Commands**: Both automatic notifications and `/manual_update` respect user map preferences
 
 ## Project Milestones
 
-Here's a breakdown of the planned development steps:
+Here's a breakdown of the development steps:
 
-1. **Setup Basic Rust Project:** Initialize the Rust project structure (`cargo new`), add dependencies (`reqwest`, `scraper`, `tokio`, `teloxide`).
-2. **Implement Web Scraper:** Fetch and parse HTML from the Luzern Police website to extract speed camera data.
-3. **Implement State Management:** Store previously seen cameras to detect new ones in a file.
-4. **Implement Telegram Integration:** Initialize the bot and send notification messages via the Telegram API.
-5. **Configuration:** Read settings (API token) from environment variables or a config file.
-6. **Error Handling & Logging:** Implement robust error handling and basic logging.
-7. **Build & Deployment:** Document build steps and basic deployment guidance.
-8. **Refine dependencies:** Remove unnecessary dependencies.
-9. **Implement `/start` command:** Add handler to subscribe users for notifications.
-10. **Implement `/current_list` command:** Add handler to display the current list of known cameras.
-11. **Implement `/unsubscribe` command:** Add handler to allow users to stop receiving notifications.
-12. **Implement `/help` command:** Add handler to show comprehensive help and command information.
-13. **Implement `/manual_update` command:** Add handler to trigger an immediate update check.
-14. **Implement `/status` command:** Add handler to show bot status, statistics, and monitoring information.
-15. **Implement `/notify_no_updates` command:** Add handler to toggle notifications for checks with no new cameras.
-16. **Persistent User Storage:** Implement saving/loading of chat IDs and notification preferences.
-17. **Systemd Integration:** Check systemd service file and instructions.
-18. **Implement Scheduling Logic:** Add polling (every 30 mins) and scheduled downtime (2 AM - 7 AM).
+1. ✅ **Setup Basic Rust Project:** Initialize the Rust project structure (`cargo new`), add dependencies (`reqwest`, `scraper`, `tokio`, `teloxide`).
+2. ✅ **Implement Web Scraper:** Fetch and parse HTML from the Luzern Police website to extract speed camera data.
+3. ✅ **Implement State Management:** Store previously seen cameras to detect new ones in a file.
+4. ✅ **Implement Telegram Integration:** Initialize the bot and send notification messages via the Telegram API.
+5. ✅ **Configuration:** Read settings (API token) from environment variables or a config file.
+6. ✅ **Error Handling & Logging:** Implement robust error handling and basic logging.
+7. ✅ **Build & Deployment:** Document build steps and basic deployment guidance.
+8. ✅ **Refine dependencies:** Remove unnecessary dependencies.
+9. ✅ **Implement `/start` command:** Add handler to subscribe users for notifications.
+10. ✅ **Implement `/current_list` command:** Add handler to display the current list of known cameras.
+11. ✅ **Implement `/unsubscribe` command:** Add handler to allow users to stop receiving notifications.
+12. ✅ **Implement `/help` command:** Add handler to show comprehensive help and command information.
+13. ✅ **Implement `/manual_update` command:** Add handler to trigger an immediate update check.
+14. ✅ **Implement `/status` command:** Add handler to show bot status, statistics, and monitoring information.
+15. ✅ **Implement `/notify_no_updates` command:** Add handler to toggle notifications for checks with no new cameras.
+16. ✅ **Persistent User Storage:** Implement saving/loading of chat IDs and notification preferences.
+17. ✅ **Systemd Integration:** Check systemd service file and instructions.
+18. ✅ **Implement Scheduling Logic:** Add polling (every 30 mins) and scheduled downtime (2 AM - 7 AM).
+19. ✅ **Google Maps Integration:** Add static map images with precise coordinate extraction from camera URLs.
+20. ✅ **User Map Preferences:** Implement `/toggle_maps` command for individual map control.
 
 ## Setup & Installation
 
@@ -123,8 +129,9 @@ The bot responds to the following commands:
 * `/start`: Subscribe to receive speed camera notifications. Enables the bot for the user and saves their chat ID to the persistent subscriber list.
 * `/unsubscribe`: Stop receiving speed camera notifications. Removes the user from the subscriber list.
 * `/current_list`: Returns a message listing the currently known active speed camera locations.
-* `/manual_update`: Triggers an immediate check for speed camera updates, independent of the regular schedule. If new cameras are found, sends individual messages with map images for each new camera location.
+* `/manual_update`: Triggers an immediate check for speed camera updates, independent of the regular schedule. If new cameras are found, sends individual messages with map images for each new camera location (respecting user map preferences).
 * `/notify_no_updates`: Toggles notifications for when the update check runs but finds no changes. This preference is stored per user.
+* `/toggle_maps`: Toggles inclusion of map images in camera notifications. Users can choose between rich visual notifications (with maps) or faster text-only alerts. This preference is stored per user and defaults to maps enabled.
 * `/status`: Shows bot status including subscriber count, known camera count, check interval, and current monitoring status.
 * `/help`: Shows a comprehensive help message with all available commands and bot features.
 
