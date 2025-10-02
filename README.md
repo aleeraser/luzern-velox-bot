@@ -11,6 +11,7 @@ The bot is written entirely in Rust for performance and reliability.
 ## Features
 
 * **Real-time Notifications:** Get alerted when new speed cameras are activated in Luzern.
+* **Interactive Map Images:** Receive map overviews showing the location of new speed cameras (when Google Maps API key is configured).
 * **User Subscription Management:** Subscribe and unsubscribe from notifications with simple commands.
 * **Customizable Notifications:** Toggle "no updates" notifications when checks find no changes.
 * **Data Source:** Fetches data directly from the official [Luzern Police website](https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen).
@@ -25,7 +26,19 @@ The bot is written entirely in Rust for performance and reliability.
 
 The bot periodically scrapes the specified Luzern Police webpage. It compares the currently listed speed cameras with the previously known list. If new entries are found, it formats a message and sends it via the Telegram Bot API to all subscribed users.
 
+When new speed cameras are detected, the bot sends individual notifications for each newly added camera. If a Google Maps API key is configured, each notification includes a static map image (400x300px) showing the camera location with a red marker. The bot gracefully falls back to text-only notifications if no API key is provided or if map generation fails.
+
 Users can subscribe and unsubscribe using simple commands, and customize their notification preferences (such as receiving notifications when no changes are detected). The bot maintains persistent storage of subscriber data and preferences in JSON files.
+
+## Map Integration Details
+
+The bot includes optional Google Maps integration that enhances notifications with location visualizations:
+
+* **Map Images**: Static map images (400x300px) with red markers showing camera locations
+* **Smart Usage**: Maps are only sent for newly added cameras, not removed ones
+* **Cost-Effective**: Typical usage (2-3 detections/day) stays within Google's free tier (10,000 requests/month)
+* **Fallback**: Works perfectly without API key - sends text-only notifications
+* **Supported Commands**: Both automatic notifications and `/manual_update` include maps when available
 
 ## Project Milestones
 
@@ -60,23 +73,37 @@ Here's a breakdown of the planned development steps:
     ```
 
 2. **Configure Environment Variables:**
-    The bot requires your Telegram Bot Token. You can provide this using a `.env` file in the project root.
+    The bot requires your Telegram Bot Token. Optionally, you can also configure a Google Maps API key for map images.
+
     * Copy the example file:
 
         ```bash
         cp .env.example .env
         ```
 
-    * Edit the `.env` file and add your actual token:
+    * Edit the `.env` file and add your tokens:
 
         ```dotenv
         # .env
         TELOXIDE_TOKEN=YOUR_BOT_TOKEN_HERE
+
+        # Optional: Google Maps API Key for map images
+        GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+
         # Optional: Set log level (e.g., RUST_LOG=debug)
         # RUST_LOG=info
         ```
 
-    * Alternatively, you can still set this as a system environment variable. The `.env` file takes precedence if it exists.
+        * **Getting a Google Maps API Key (Optional):**
+        1. Go to the [Google Cloud Console](https://console.cloud.google.com/google/maps-apis)
+        2. Create a new project or select an existing one
+        3. Enable the "Maps Static API"
+        4. Create credentials (API Key)
+        5. Copy the API key to your `.env` file
+
+        **Note:** With typical usage (2-3 detections/day), you'll stay within the free tier.
+
+    * Alternatively, you can set these as system environment variables. The `.env` file takes precedence if it exists.
 3. **Build the application:**
 
     ```bash
@@ -96,7 +123,7 @@ The bot responds to the following commands:
 * `/start`: Subscribe to receive speed camera notifications. Enables the bot for the user and saves their chat ID to the persistent subscriber list.
 * `/unsubscribe`: Stop receiving speed camera notifications. Removes the user from the subscriber list.
 * `/current_list`: Returns a message listing the currently known active speed camera locations.
-* `/manual_update`: Triggers an immediate check for speed camera updates, independent of the regular schedule.
+* `/manual_update`: Triggers an immediate check for speed camera updates, independent of the regular schedule. If new cameras are found, sends individual messages with map images for each new camera location.
 * `/notify_no_updates`: Toggles notifications for when the update check runs but finds no changes. This preference is stored per user.
 * `/status`: Shows bot status including subscriber count, known camera count, check interval, and current monitoring status.
 * `/help`: Shows a comprehensive help message with all available commands and bot features.
@@ -137,7 +164,7 @@ Group=your_group
 # Set the working directory to the project root
 WorkingDirectory=/home/alessandro/git/luzern-velox-vibebot # <-- ADJUST THIS PATH
 
-# Environment variables (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, RUST_LOG)
+# Environment variables (TELEGRAM_BOT_TOKEN, RUST_LOG, GOOGLE_MAPS_API_KEY)
 # are expected to be loaded from the .env file located in the WorkingDirectory.
 # Ensure the .env file exists and is configured correctly.
 # Alternatively, uncomment and use EnvironmentFile= to specify a different path,
