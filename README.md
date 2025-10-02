@@ -4,18 +4,19 @@ A Telegram bot that notifies users about newly activated speed cameras in the ca
 
 ## Description
 
-This bot monitors the official Luzern Police website for updates on active speed camera locations. When a new camera is detected, it sends a notification to subscribed Telegram users or channels.
+This bot monitors the official Luzern Police website for updates on active speed camera locations. When cameras are added or removed, it sends notifications to subscribed Telegram users or channels.
 
 The bot is written entirely in Rust for performance and reliability.
 
 ## Features
 
-* **Real-time Notifications:** Get alerted when new speed cameras are activated in Luzern.
-* **Interactive Map Images:** Receive map overviews showing the precise location of new speed cameras (when Google Maps API key is configured).
+* **Real-time Notifications:** Get alerted when speed cameras are activated or removed in Luzern.
+* **Interactive Map Images:** Receive map overviews showing the precise location of speed cameras (when Google Maps API key is configured).
 * **User-Configurable Maps:** Control whether you receive map images or text-only notifications with the `/toggle_maps` command.
 * **User Subscription Management:** Subscribe and unsubscribe from notifications with simple commands.
 * **Customizable Notifications:** Toggle "no updates" notifications when checks find no changes.
 * **Precise Coordinates:** Extracts exact latitude/longitude from camera source data for accurate map positioning.
+* **Comprehensive Change Detection:** Monitors both newly added and removed speed cameras.
 * **Data Source:** Fetches data directly from the official [Luzern Police website](https://polizei.lu.ch/organisation/sicherheit_verkehrspolizei/verkehrspolizei/spezialversorgung/verkehrssicherheit/Aktuelle_Tempomessungen).
 * **Regular Checks:** Polls for updates every 30 minutes during operational hours.
 * **Scheduled Downtime:** The bot pauses checks between 2:00 AM and 7:00 AM (local time) to conserve resources.
@@ -26,9 +27,9 @@ The bot is written entirely in Rust for performance and reliability.
 
 ## How it Works
 
-The bot periodically scrapes the specified Luzern Police webpage. It compares the currently listed speed cameras with the previously known list. If new entries are found, it formats a message and sends it via the Telegram Bot API to all subscribed users.
+The bot periodically scrapes the specified Luzern Police webpage. It compares the currently listed speed cameras with the previously known list. If changes are found (new cameras added or existing cameras removed), it formats messages and sends them via the Telegram Bot API to all subscribed users.
 
-When new speed cameras are detected, the bot sends individual notifications for each newly added camera. If a Google Maps API key is configured and the user has maps enabled, each notification includes a static map image (800x600px) showing the camera location with a red marker, centered precisely on the camera coordinates.
+When speed camera changes are detected, the bot sends individual notifications for each added or removed camera. If a Google Maps API key is configured and the user has maps enabled, each notification includes a static map image (800x600px) showing the camera location with a red marker, centered precisely on the camera coordinates.
 
 The bot implements an intelligent caching system that stores map images locally in the `cached_maps` directory, ensuring that each unique camera location is only downloaded once from the Google Maps API. This dramatically reduces API usage and improves response times for previously seen locations.
 
@@ -44,7 +45,7 @@ The bot includes optional Google Maps integration that enhances notifications wi
 * **Camera-Centered Maps**: Static map images (800x600px) centered on the exact camera location with red markers
 * **Intelligent Caching**: Maps are cached locally to minimize API calls - each unique location is only downloaded once
 * **User Control**: Individual users can toggle maps on/off with `/toggle_maps` command (enabled by default)
-* **Smart Usage**: Maps are only sent for newly added cameras, not removed ones
+* **Universal Coverage**: Maps are included for both newly added and removed cameras when enabled
 * **Cost-Effective**: Local caching combined with typical usage (2-3 detections/day) stays well within Google's free tier
 * **Persistent Cache**: Cached maps never expire, providing instant access to previously generated maps
 * **Fallback**: Works perfectly without API key - sends text-only notifications
@@ -75,6 +76,7 @@ Here's a breakdown of the development steps:
 19. ✅ **Google Maps Integration:** Add static map images with precise coordinate extraction from camera URLs.
 20. ✅ **User Map Preferences:** Implement `/toggle_maps` command for individual map control.
 21. ✅ **Map Caching System:** Implement local caching to minimize API calls and improve performance.
+22. ✅ **Removal Notifications:** Add notifications for removed speed cameras with same styling as additions.
 
 ## Setup & Installation
 
@@ -136,13 +138,13 @@ The bot responds to the following commands:
 * `/start`: Subscribe to receive speed camera notifications. Enables the bot for the user and saves their chat ID to the persistent subscriber list.
 * `/unsubscribe`: Stop receiving speed camera notifications. Removes the user from the subscriber list.
 * `/current_list`: Returns a message listing the currently known active speed camera locations.
-* `/manual_update`: Triggers an immediate check for speed camera updates, independent of the regular schedule. If new cameras are found, sends individual messages with map images for each new camera location (respecting user map preferences).
+* `/manual_update`: Triggers an immediate check for speed camera updates, independent of the regular schedule. If changes are found (new cameras added or existing cameras removed), sends individual messages with map images for each changed camera location (respecting user map preferences).
 * `/notify_no_updates`: Toggles notifications for when the update check runs but finds no changes. This preference is stored per user.
 * `/toggle_maps`: Toggles inclusion of map images in camera notifications. Users can choose between rich visual notifications (with maps) or faster text-only alerts. This preference is stored per user and defaults to maps enabled.
 * `/status`: Shows bot status including subscriber count, known camera count, check interval, and current monitoring status.
 * `/help`: Shows a comprehensive help message with all available commands and bot features.
 
-If no commands are used, the bot will automatically send notifications to subscribed users when new speed cameras are detected based on its schedule.
+If no commands are used, the bot will automatically send notifications to subscribed users when speed camera changes are detected (additions or removals) based on its schedule.
 
 ## Systemd Service
 
@@ -166,31 +168,15 @@ For running the bot reliably as a background service on Linux systems, a systemd
 ```ini
 [Unit]
 Description=Luzern Velox Vibebot Telegram Bot
-# Start after the network is available
 After=network.target
 
 [Service]
-# User and Group that the service will run as
-# Ensure this user has read/write permissions for WorkingDirectory and the executable
-User=your_user
-Group=your_group
+Type=simple
+EnvironmentFile=/home/USER/git/luzern-velox-vibebot/.env
 
-# Set the working directory to the project root
-WorkingDirectory=/home/alessandro/git/luzern-velox-vibebot # <-- ADJUST THIS PATH
+WorkingDirectory=/home/USER/git/luzern-velox-vibebot
+ExecStart=/home/USER/git/luzern-velox-vibebot/target/release/luzern-velox-vibebot
 
-# Environment variables (TELEGRAM_BOT_TOKEN, RUST_LOG, GOOGLE_MAPS_API_KEY)
-# are expected to be loaded from the .env file located in the WorkingDirectory.
-# Ensure the .env file exists and is configured correctly.
-# Alternatively, uncomment and use EnvironmentFile= to specify a different path,
-# or use Environment="VAR=value" directives here (less recommended for secrets).
-# Example: EnvironmentFile=/etc/luzern-velox-vibebot/config
-# Example: Environment="RUST_LOG=debug"
-
-# Command to execute
-# Ensure the binary is built and located here
-ExecStart=/home/alessandro/git/luzern-velox-vibebot/target/release/luzern-velox-vibebot # <-- ADJUST THIS PATH if needed
-
-# Restart the service if it fails
 Restart=on-failure
 RestartSec=5s
 
@@ -199,9 +185,10 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-# Enable the service for the default multi-user target
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
+
+_Note_: change `USER` to your username and adjust the path if necessary
 
 ## Contributing
 
