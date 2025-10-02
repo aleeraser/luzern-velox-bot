@@ -315,7 +315,7 @@ async fn manual_update_command(
                 for camera in &new_cameras {
                     let camera_message = format!("📍 {}", camera.name);
 
-                    match send_message_with_map(
+                    match send_message(
                         &bot,
                         msg.chat.id,
                         &camera_message,
@@ -1076,8 +1076,36 @@ fn extract_coordinates_from_onclick(onclick: &str) -> Option<(f64, f64)> {
     }
 }
 
-// Send message with map image for a speed camera location
-async fn send_message_with_map(
+// Ensure map is cached for future use (downloads if not already cached)
+async fn ensure_map_cached(camera: &CameraData, api_key: &str) -> Result<()> {
+    let (cache_path, exists) = get_cached_map_path(camera);
+
+    if exists {
+        log::debug!(
+            "Map already cached for {}: {}",
+            camera.name,
+            cache_path.display()
+        );
+        return Ok(());
+    }
+
+    log::debug!("Ensuring map is cached for {}", camera.name);
+
+    // Download and cache the map
+    match download_map_image_with_coordinates(camera, api_key).await {
+        Ok(_) => {
+            log::debug!("Successfully cached map for {}", camera.name);
+            Ok(())
+        }
+        Err(e) => {
+            log::warn!("Failed to cache map for {}: {}", camera.name, e);
+            Err(e)
+        }
+    }
+}
+
+// decide whether to send maps or text based on user preferences and API availability
+async fn send_message(
     bot: &Bot,
     chat_id: ChatId,
     message_text: &str,
@@ -1085,6 +1113,11 @@ async fn send_message_with_map(
     google_maps_api_key: Option<&str>,
     include_maps: bool,
 ) -> Result<()> {
+    // Always try to cache the map if API key is available (for future use)
+    if let Some(api_key) = google_maps_api_key {
+        let _ = ensure_map_cached(camera_data, api_key).await;
+    }
+
     match (google_maps_api_key, include_maps) {
         (Some(api_key), true) => {
             // Try to send with map image
@@ -1257,7 +1290,7 @@ async fn compare_and_notify(
                 log::info!("Sending notification for camera: {}", camera.name);
                 let camera_message = format!("📍 {}", camera.name);
 
-                match send_message_with_map(
+                match send_message(
                     &bot,
                     chat_id,
                     &camera_message,
