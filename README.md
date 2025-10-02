@@ -28,7 +28,11 @@ The bot is written entirely in Rust for performance and reliability.
 
 The bot periodically scrapes the specified Luzern Police webpage. It compares the currently listed speed cameras with the previously known list. If new entries are found, it formats a message and sends it via the Telegram Bot API to all subscribed users.
 
-When new speed cameras are detected, the bot sends individual notifications for each newly added camera. If a Google Maps API key is configured and the user has maps enabled, each notification includes a static map image (400x300px) showing the camera location with a red marker, centered precisely on the camera coordinates. The bot gracefully falls back to text-only notifications if no API key is provided, if map generation fails, or if the user has disabled maps via `/toggle_maps`.
+When new speed cameras are detected, the bot sends individual notifications for each newly added camera. If a Google Maps API key is configured and the user has maps enabled, each notification includes a static map image (800x600px) showing the camera location with a red marker, centered precisely on the camera coordinates.
+
+The bot implements an intelligent caching system that stores map images locally in the `cached_maps` directory, ensuring that each unique camera location is only downloaded once from the Google Maps API. This dramatically reduces API usage and improves response times for previously seen locations.
+
+The bot gracefully falls back to text-only notifications if no API key is provided, if map generation fails, or if the user has disabled maps via `/toggle_maps`.
 
 Users can subscribe and unsubscribe using simple commands, and customize their notification preferences (such as receiving notifications when no changes are detected, or toggling map images on/off). The bot maintains persistent storage of subscriber data and preferences in JSON files.
 
@@ -37,10 +41,12 @@ Users can subscribe and unsubscribe using simple commands, and customize their n
 The bot includes optional Google Maps integration that enhances notifications with location visualizations:
 
 * **Precise Positioning**: Extracts exact latitude/longitude coordinates from camera source URLs for accurate map positioning
-* **Camera-Centered Maps**: Static map images (400x300px) centered on the exact camera location with red markers
+* **Camera-Centered Maps**: Static map images (800x600px) centered on the exact camera location with red markers
+* **Intelligent Caching**: Maps are cached locally to minimize API calls - each unique location is only downloaded once
 * **User Control**: Individual users can toggle maps on/off with `/toggle_maps` command (enabled by default)
 * **Smart Usage**: Maps are only sent for newly added cameras, not removed ones
-* **Cost-Effective**: Typical usage (2-3 detections/day) stays within Google's free tier (10,000 requests/month)
+* **Cost-Effective**: Local caching combined with typical usage (2-3 detections/day) stays well within Google's free tier
+* **Persistent Cache**: Cached maps never expire, providing instant access to previously generated maps
 * **Fallback**: Works perfectly without API key - sends text-only notifications
 * **Supported Commands**: Both automatic notifications and `/manual_update` respect user map preferences
 
@@ -68,6 +74,7 @@ Here's a breakdown of the development steps:
 18. ✅ **Implement Scheduling Logic:** Add polling (every 30 mins) and scheduled downtime (2 AM - 7 AM).
 19. ✅ **Google Maps Integration:** Add static map images with precise coordinate extraction from camera URLs.
 20. ✅ **User Map Preferences:** Implement `/toggle_maps` command for individual map control.
+21. ✅ **Map Caching System:** Implement local caching to minimize API calls and improve performance.
 
 ## Setup & Installation
 

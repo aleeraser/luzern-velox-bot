@@ -4,3 +4,5 @@ target/
 *.json
 .env
 *.service
+
+cached_maps/

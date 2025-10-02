@@ -35,6 +35,9 @@ const MAP_ZOOM_LEVEL: u8 = 15;
 const MAP_WIDTH: u16 = 400 * 2;
 const MAP_HEIGHT: u16 = 300 * 2;
 
+// Map caching configuration
+const CACHED_MAPS_DIR: &str = "cached_maps";
+
 // Retry configuration for network operations
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const RETRY_DELAY_SECONDS: u64 = 5;
@@ -753,13 +756,31 @@ fn generate_map_url_with_coordinates(camera: &CameraData, api_key: &str) -> Stri
     )
 }
 
-// Download map image from Google Maps Static API using coordinates
+// Download map image from Google Maps Static API using coordinates (with caching)
 async fn download_map_image_with_coordinates(
     camera: &CameraData,
     api_key: &str,
 ) -> Result<bytes::Bytes> {
-    let url = generate_map_url_with_coordinates(camera, api_key);
+    // First, try to load from cache
+    match load_map_from_cache(camera).await {
+        Ok(cached_bytes) => {
+            log::debug!(
+                "Using cached map image for {} ({} bytes)",
+                camera.name,
+                cached_bytes.len()
+            );
+            return Ok(cached_bytes);
+        }
+        Err(_) => {
+            log::debug!(
+                "No cached map found for {}, downloading from API",
+                camera.name
+            );
+        }
+    }
 
+    // If not in cache, download from Google Maps API
+    let url = generate_map_url_with_coordinates(camera, api_key);
     log::debug!("Downloading map image for {} from: {}", camera.name, url);
 
     let client = reqwest::Client::new();
@@ -787,7 +808,97 @@ async fn download_map_image_with_coordinates(
         image_bytes.len(),
         camera.name
     );
+
+    // Save to cache for future use (don't fail if caching fails)
+    if let Err(e) = save_map_to_cache(camera, &image_bytes).await {
+        log::warn!("Failed to cache map for {}: {}", camera.name, e);
+        // Continue anyway - we still have the image data
+    }
+
     Ok(image_bytes)
+}
+
+// Generate cache filename for a map image
+fn generate_cache_filename(camera: &CameraData) -> String {
+    // Clean the camera name: remove " - " patterns, parentheses, and replace spaces with underscores
+    let cleaned_name = camera
+        .name
+        .replace(" - ", "-") // Remove spaces around dashes
+        .replace('(', "") // Remove opening parentheses
+        .replace(')', "") // Remove closing parentheses
+        .replace(' ', "_"); // Replace remaining spaces with underscores
+
+    format!(
+        "{}-{}-{}-{}-{}x{}.png",
+        cleaned_name, camera.latitude, camera.longitude, MAP_ZOOM_LEVEL, MAP_WIDTH, MAP_HEIGHT
+    )
+}
+
+// Check if a cached map exists and return its path
+fn get_cached_map_path(camera: &CameraData) -> (std::path::PathBuf, bool) {
+    let filename = generate_cache_filename(camera);
+    let path = std::path::Path::new(CACHED_MAPS_DIR).join(filename);
+    let exists = path.exists();
+    (path, exists)
+}
+
+// Save map image to cache
+async fn save_map_to_cache(camera: &CameraData, image_bytes: &bytes::Bytes) -> Result<()> {
+    // Ensure cache directory exists
+    if let Err(e) = std::fs::create_dir_all(CACHED_MAPS_DIR) {
+        log::warn!(
+            "Failed to create cache directory {}: {}",
+            CACHED_MAPS_DIR,
+            e
+        );
+        return Err(anyhow::anyhow!("Failed to create cache directory: {}", e));
+    }
+
+    let (cache_path, _) = get_cached_map_path(camera);
+
+    match std::fs::write(&cache_path, image_bytes) {
+        Ok(_) => {
+            log::debug!(
+                "Saved map image for {} to cache: {}",
+                camera.name,
+                cache_path.display()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to save map image for {} to cache: {}",
+                camera.name,
+                e
+            );
+            Err(anyhow::anyhow!("Failed to save map to cache: {}", e))
+        }
+    }
+}
+
+// Load map image from cache
+async fn load_map_from_cache(camera: &CameraData) -> Result<bytes::Bytes> {
+    let (cache_path, exists) = get_cached_map_path(camera);
+
+    if !exists {
+        return Err(anyhow::anyhow!("Cached map not found"));
+    }
+
+    match std::fs::read(&cache_path) {
+        Ok(data) => {
+            log::debug!(
+                "Loaded map image for {} from cache: {} ({} bytes)",
+                camera.name,
+                cache_path.display(),
+                data.len()
+            );
+            Ok(bytes::Bytes::from(data))
+        }
+        Err(e) => {
+            log::warn!("Failed to read cached map for {}: {}", camera.name, e);
+            Err(anyhow::anyhow!("Failed to read cached map: {}", e))
+        }
+    }
 }
 
 // Create a temporary file for the map image
@@ -1135,10 +1246,7 @@ async fn compare_and_notify(
             let chat_id = ChatId(*chat_id_val);
 
             // Send a header message first
-            let header_message = format!(
-                "🚨 {} new speed camera(s):",
-                new_cameras.len()
-            );
+            let header_message = format!("🚨 {} new speed camera(s):", new_cameras.len());
             match send_message_with_retry(&bot, chat_id, header_message).await {
                 Ok(_) => log::debug!("Sent header message to chat ID {}", chat_id.0),
                 Err(e) => log::error!("Failed to send header message to {}: {}", chat_id.0, e),
@@ -1462,4 +1570,48 @@ async fn main() -> Result<()> {
 
     log::info!("Bot shutdown complete.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cache_filename_generation() {
+        let camera = CameraData {
+            name: "Test Camera - Location".to_string(),
+            latitude: 47.0502,
+            longitude: 8.3093,
+        };
+
+        let filename = generate_cache_filename(&camera);
+        assert_eq!(
+            filename,
+            "Test_Camera-Location-47.0502-8.3093-15-800x600.png"
+        );
+
+        let camera_with_spaces = CameraData {
+            name: "Camera With Spaces".to_string(),
+            latitude: 46.1234,
+            longitude: 7.5678,
+        };
+
+        let filename_spaces = generate_cache_filename(&camera_with_spaces);
+        assert_eq!(
+            filename_spaces,
+            "Camera_With_Spaces-46.1234-7.5678-15-800x600.png"
+        );
+
+        let camera_with_parentheses = CameraData {
+            name: "Camera (Test Location)".to_string(),
+            latitude: 45.9876,
+            longitude: 6.4321,
+        };
+
+        let filename_parens = generate_cache_filename(&camera_with_parentheses);
+        assert_eq!(
+            filename_parens,
+            "Camera_Test_Location-45.9876-6.4321-15-800x600.png"
+        );
+    }
 }
