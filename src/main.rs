@@ -778,6 +778,12 @@ fn format_camera_message(camera: &CameraData) -> String {
     format!("📍 <a href=\"{}\">{}</a>", maps_url, camera.name)
 }
 
+fn format_removed_camera_message(camera: &CameraData) -> String {
+    let maps_url = generate_google_maps_view_url(camera);
+    // Use HTML format for simpler parsing
+    format!("🟢 <a href=\"{}\">{}</a> (removed)", maps_url, camera.name)
+}
+
 // Download map image from Google Maps Static API using coordinates (with caching)
 async fn download_map_image_with_coordinates(
     camera: &CameraData,
@@ -1221,6 +1227,8 @@ async fn compare_and_notify(
         current_cameras.len(),
         known_cameras.len()
     );
+
+    // Detect new cameras
     let mut new_cameras = Vec::new();
     for camera in current_cameras {
         if !known_cameras.contains(camera) {
@@ -1228,8 +1236,16 @@ async fn compare_and_notify(
         }
     }
 
-    if new_cameras.is_empty() {
-        log::info!("No new cameras detected.");
+    // Detect removed cameras
+    let mut removed_cameras = Vec::new();
+    for camera in known_cameras {
+        if !current_cameras.contains(camera) {
+            removed_cameras.push(camera.clone());
+        }
+    }
+
+    if new_cameras.is_empty() && removed_cameras.is_empty() {
+        log::info!("No new or removed cameras detected.");
 
         // Send "no updates" notifications to users who have opted in
         let subscribers = state.subscribers.read().await;
@@ -1247,8 +1263,7 @@ async fn compare_and_notify(
                     "Sending 'no updates' notification to {} subscribers",
                     no_update_subscribers.len()
                 );
-                let no_update_message =
-                    "ℹ️ Camera check completed: No new speed cameras detected\\.";
+                let no_update_message = "ℹ️ Camera check completed: No changes detected\\.";
 
                 for chat_id_val in no_update_subscribers {
                     let chat_id = ChatId(chat_id_val);
@@ -1278,9 +1293,6 @@ async fn compare_and_notify(
             }
         }
     } else {
-        log::info!("New cameras detected:");
-        new_cameras.sort_unstable();
-
         // Get Google Maps API key from environment
         let google_maps_api_key = std::env::var("GOOGLE_MAPS_API_KEY").ok();
         if google_maps_api_key.is_none() {
@@ -1292,62 +1304,142 @@ async fn compare_and_notify(
         // Get subscriber list (read lock)
         let subscribers = state.subscribers.read().await;
         if subscribers.is_empty() {
-            log::warn!("New cameras detected but no subscribers to notify.");
+            log::warn!("Camera changes detected but no subscribers to notify.");
             return Ok(());
         }
 
-        log::info!(
-            "Sending notification to {} subscribers for {} new cameras...",
-            subscribers.len(),
-            new_cameras.len()
-        );
         let mut success_count = 0;
         let mut error_count = 0;
 
-        for (chat_id_val, subscriber_data) in subscribers.iter() {
-            let chat_id = ChatId(*chat_id_val);
+        // Process new cameras
+        if !new_cameras.is_empty() {
+            log::info!("New cameras detected:");
+            new_cameras.sort_unstable();
 
-            // Send a header message first
-            let header_message = format!("🚨 {} new speed camera(s):", new_cameras.len());
-            match send_message_with_retry(&bot, chat_id, header_message).await {
-                Ok(_) => log::debug!("Sent header message to chat ID {}", chat_id.0),
-                Err(e) => log::error!("Failed to send header message to {}: {}", chat_id.0, e),
-            }
+            log::info!(
+                "Sending new camera notifications to {} subscribers for {} new cameras...",
+                subscribers.len(),
+                new_cameras.len()
+            );
 
-            // Send individual messages with maps for each camera
-            for camera in &new_cameras {
-                log::info!("Sending notification for camera: {}", camera.name);
-                let camera_message = format_camera_message(camera);
+            for (chat_id_val, subscriber_data) in subscribers.iter() {
+                let chat_id = ChatId(*chat_id_val);
 
-                match send_message(
-                    &bot,
-                    chat_id,
-                    &camera_message,
-                    camera,
-                    google_maps_api_key.as_deref(),
-                    subscriber_data.include_maps,
-                )
-                .await
-                {
+                // Send a header message first
+                let header_message = format!("🚨 {} new speed camera(s):", new_cameras.len());
+                match send_message_with_retry(&bot, chat_id, header_message).await {
                     Ok(_) => {
-                        log::debug!(
-                            "Successfully sent camera notification to chat ID {}",
-                            chat_id.0
-                        );
-                        success_count += 1;
+                        log::debug!("Sent new cameras header message to chat ID {}", chat_id.0)
                     }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to send camera notification to {} after retries: {}",
-                            chat_id.0,
-                            e
-                        );
-                        error_count += 1;
-                    }
+                    Err(e) => log::error!(
+                        "Failed to send new cameras header message to {}: {}",
+                        chat_id.0,
+                        e
+                    ),
                 }
 
-                // Small delay between messages to avoid rate limiting
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                // Send individual messages with maps for each camera
+                for camera in &new_cameras {
+                    log::info!("Sending notification for new camera: {}", camera.name);
+                    let camera_message = format_camera_message(camera);
+
+                    match send_message(
+                        &bot,
+                        chat_id,
+                        &camera_message,
+                        camera,
+                        google_maps_api_key.as_deref(),
+                        subscriber_data.include_maps,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            log::debug!(
+                                "Successfully sent new camera notification to chat ID {}",
+                                chat_id.0
+                            );
+                            success_count += 1;
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to send new camera notification to {} after retries: {}",
+                                chat_id.0,
+                                e
+                            );
+                            error_count += 1;
+                        }
+                    }
+
+                    // Small delay between messages to avoid rate limiting
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+
+        // Process removed cameras
+        if !removed_cameras.is_empty() {
+            log::info!("Removed cameras detected:");
+            removed_cameras.sort_unstable();
+
+            log::info!(
+                "Sending removed camera notifications to {} subscribers for {} removed cameras...",
+                subscribers.len(),
+                removed_cameras.len()
+            );
+
+            for (chat_id_val, subscriber_data) in subscribers.iter() {
+                let chat_id = ChatId(*chat_id_val);
+
+                // Send a header message first
+                let header_message =
+                    format!("✅ {} speed camera(s) removed:", removed_cameras.len());
+                match send_message_with_retry(&bot, chat_id, header_message).await {
+                    Ok(_) => log::debug!(
+                        "Sent removed cameras header message to chat ID {}",
+                        chat_id.0
+                    ),
+                    Err(e) => log::error!(
+                        "Failed to send removed cameras header message to {}: {}",
+                        chat_id.0,
+                        e
+                    ),
+                }
+
+                // Send individual messages with maps for each removed camera
+                for camera in &removed_cameras {
+                    log::info!("Sending notification for removed camera: {}", camera.name);
+                    let camera_message = format_removed_camera_message(camera);
+
+                    match send_message(
+                        &bot,
+                        chat_id,
+                        &camera_message,
+                        camera,
+                        google_maps_api_key.as_deref(),
+                        subscriber_data.include_maps,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            log::debug!(
+                                "Successfully sent removed camera notification to chat ID {}",
+                                chat_id.0
+                            );
+                            success_count += 1;
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to send removed camera notification to {} after retries: {}",
+                                chat_id.0,
+                                e
+                            );
+                            error_count += 1;
+                        }
+                    }
+
+                    // Small delay between messages to avoid rate limiting
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
             }
         }
 
@@ -1689,6 +1781,12 @@ mod tests {
         assert_eq!(
             message,
             "📍 <a href=\"https://maps.google.com/?q=47.0502,8.3093\">Luzern Bahnhofstrasse</a>"
+        );
+
+        let removed_message = format_removed_camera_message(&camera);
+        assert_eq!(
+            removed_message,
+            "🟢 <a href=\"https://maps.google.com/?q=47.0502,8.3093\">Luzern Bahnhofstrasse</a> (removed)"
         );
 
         let url = generate_google_maps_view_url(&camera);
