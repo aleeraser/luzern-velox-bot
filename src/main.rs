@@ -695,6 +695,14 @@ async fn send_message_with_retry_and_parse_mode(
         if let Some(mode) = parse_mode {
             request = request.parse_mode(mode);
         }
+        // Disable web page preview for links to avoid cluttering the chat
+        request = request.link_preview_options(teloxide::types::LinkPreviewOptions {
+            is_disabled: true,
+            url: None,
+            prefer_small_media: false,
+            prefer_large_media: false,
+            show_above_text: false,
+        });
 
         match request.await {
             Ok(_) => {
