@@ -164,6 +164,13 @@ async fn current_list_command(
     match bot
         .send_message(msg.chat.id, response_text)
         .parse_mode(teloxide::types::ParseMode::Html)
+        .link_preview_options(teloxide::types::LinkPreviewOptions {
+            is_disabled: true,
+            url: None,
+            prefer_small_media: false,
+            prefer_large_media: false,
+            show_above_text: false,
+        })
         .await
     {
         Ok(_) => log::info!("Successfully sent camera list response"),
