@@ -271,12 +271,6 @@ async fn manual_update_command(
     let chat_id = msg.chat.id.0;
     log::info!("Received /manual_update command from chat ID: {chat_id}");
 
-    // Get user preferences for maps
-    let subscribers = state.subscribers.read().await;
-    let user_prefs = subscribers.get(&chat_id).cloned().unwrap_or_default();
-    let include_maps = user_prefs.include_maps;
-    drop(subscribers);
-
     bot.send_message(msg.chat.id, "Starting manual camera check...")
         .await?;
 
@@ -299,59 +293,25 @@ async fn manual_update_command(
                 current_cameras.len()
             );
 
-            // For manual updates, we check for new cameras and send maps to the requesting user
-            let new_cameras: Vec<CameraData> = current_cameras
-                .difference(&known_cameras)
-                .cloned()
-                .collect();
+            let new_count = current_cameras.difference(&known_cameras).count();
+            let removed_count = known_cameras.difference(&current_cameras).count();
+            let total_count = current_cameras.len();
 
             // Update state file with current cameras
             if let Err(e) = update_state_file(&current_cameras, &known_cameras) {
                 log::error!("Failed to update state file during manual update: {e}");
             }
 
-            // Send summary to the user who requested the update
-            let new_count = new_cameras.len();
-            let total_count = current_cameras.len();
+            // Notify all subscribers of any changes (including the requesting user)
+            if let Err(e) =
+                compare_and_notify(bot.clone(), state, &current_cameras, &known_cameras).await
+            {
+                log::error!("Failed to notify subscribers during manual update: {e}");
+            }
 
-            if new_count > 0 {
-                // Send header message
-                let header_message = format!("Found {} new camera(s):", new_count);
-                bot.send_message(msg.chat.id, header_message).await?;
-
-                // Get Google Maps API key from environment
-                let google_maps_api_key = std::env::var("GOOGLE_MAPS_API_KEY").ok();
-                if google_maps_api_key.is_none() {
-                    log::warn!("GOOGLE_MAPS_API_KEY not found in environment. Map images will not be included in manual update.");
-                }
-
-                // Send individual messages with maps for each new camera
-                for camera in &new_cameras {
-                    let camera_message = format_camera_message(camera);
-
-                    match send_message(
-                        &bot,
-                        msg.chat.id,
-                        &camera_message,
-                        camera,
-                        google_maps_api_key.as_deref(),
-                        include_maps,
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            log::debug!("Successfully sent camera map for: {}", camera);
-                        }
-                        Err(e) => {
-                            log::error!("Failed to send camera map for {}: {}", camera, e);
-                        }
-                    }
-
-                    // Small delay between messages to avoid rate limiting
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            } else {
-                let summary = format!("No new cameras found ({} total cameras)", total_count);
+            // If no changes, send summary to the requesting user (matches old behaviour)
+            if new_count == 0 && removed_count == 0 {
+                let summary = format!("No new cameras found ({total_count} total cameras)");
                 bot.send_message(msg.chat.id, summary).await?;
             }
         }
