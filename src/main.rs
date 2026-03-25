@@ -27,7 +27,7 @@ const CAMERA_LIST_URL: &str = "https://polizei.lu.ch/organisation/sicherheit_ver
 const CAMERA_SELECTOR: &str = "#radarList li > a";
 const CHECK_INTERVAL_MINUTES: u64 = 30;
 const DOWNTIME_START_HOUR: u8 = 2;
-const DOWNTIME_END_HOUR: u8 = 7;
+const DOWNTIME_END_HOUR: u8 = 6;
 
 // Google Maps Static API configuration
 const GOOGLE_MAPS_BASE_URL: &str = "https://maps.googleapis.com/maps/api/staticmap";
@@ -1445,7 +1445,7 @@ fn update_state_file(
     Ok(())
 }
 
-// Check if current time is within downtime hours (2 AM - 7 AM local time)
+// Check if current time is within downtime hours (2 AM - 6 AM local time)
 fn is_downtime() -> bool {
     use chrono::prelude::*;
     let now = Local::now();
